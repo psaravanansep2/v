@@ -7,6 +7,37 @@ Pure Python 3.9+, no dependencies. It does not connect to or automate the Uber a
 (that violates Uber's terms and risks deactivation) — you enter the numbers the
 offer card shows.
 
+## On your phone: Dash Spotter (`docs/index.html`)
+
+A one-page web app for use while you drive, with the same scoring as the Python tool.
+
+- **Offer:** type in payout, minutes and miles, and ACCEPT or DECLINE updates as you type.
+  Tap *I took it* or *I passed* to log the offer with your GPS position and the time.
+- **Go online:** tracks your location while the page is open. It adds up miles driven and
+  time spent in each ~half-mile square, and keeps the screen awake. Phones pause location for
+  pages in the background, so keep it on screen (a dashboard mount works well).
+- **Spots:** for the current hour and day, or any time you pick, it ranks the squares where good
+  offers came in most often per hour you spent there. Tap *Go* to open directions in Google Maps.
+  Offers from similar hours and days count partly, and squares with under ~2 hours of data are
+  pulled toward your average, so one lucky offer doesn't put a spot on top.
+- **History:** today's earnings, online time and net $/hr. *Export CSV* saves a file that
+  `python -m ubereats insights` can read (it adds a "Best spots" list).
+
+All data stays in the phone's browser. Nothing is uploaded.
+
+### Getting it on your phone
+
+Location only works over HTTPS, so host the page with GitHub Pages:
+
+1. Merge this branch into `main` (or pick this branch in step 2).
+2. On GitHub: **Settings → Pages → Build and deployment → Deploy from a branch**, choose
+   `main` and the `/docs` folder, then save. (Pages on a private repo needs a paid GitHub plan.
+   Otherwise make the repo public. The page holds no personal data, since your logs stay on your phone.)
+3. Open `https://<your-username>.github.io/<repo>/` on your phone, allow location, and use
+   **Add to Home Screen** so it opens like an app.
+
+To try it before your first shift, use **Settings → Load 3 weeks of demo data** (remove it after).
+
 ## How the algorithm works
 
 For each offer it estimates the **real** cost of the trip:

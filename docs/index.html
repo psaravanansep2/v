@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14171c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Dash Spotter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  /* Dark-first: this is used in a car, mostly at lunch and night. */
+  :root {
+    color-scheme: dark;
+    --bg: #14171c;
+    --surface: #1e232b;
+    --surface-2: #272d37;
+    --line: #333b47;
+    --text: #e8ecf1;
+    --muted: #8d97a6;
+    --accent: #f5b942;        /* road-marking yellow */
+    --accent-ink: #1a1405;
+    --good: #3dd68c;
+    --good-bg: #123526;
+    --bad: #ff6b6b;
+    --bad-bg: #3a1a1c;
+    --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --tabbar-h: 60px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg: #f2f3f5; --surface: #ffffff; --surface-2: #e8eaee; --line: #d3d7de;
+      --text: #15191f; --muted: #5b6573; --accent: #b7791f; --accent-ink: #ffffff;
+      --good: #12884f; --good-bg: #dcf5e8; --bad: #cc3333; --bad-bg: #fbe3e3;
+    }
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f2f3f5; --surface: #ffffff; --surface-2: #e8eaee; --line: #d3d7de;
+    --text: #15191f; --muted: #5b6573; --accent: #b7791f; --accent-ink: #ffffff;
+    --good: #12884f; --good-bg: #dcf5e8; --bad: #cc3333; --bad-bg: #fbe3e3;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 var(--body);
+    -webkit-tap-highlight-color: transparent;
+  }
+  main {
+    max-width: 560px; margin: 0 auto;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 24px);
+    display: grid; gap: 14px;
+  }
+  h1, h2 { font-family: var(--display); font-weight: 700; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+  h2 { font-size: 22px; }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+  .muted { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+  button, .btn {
+    font: 600 16px var(--body); color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-height: 48px;
+    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  button:focus-visible, input:focus-visible, select:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .good-btn { background: var(--good); color: #06140d; border-color: transparent; }
+  .danger { color: var(--bad); }
+  .panel[hidden] { display: none !important; }
+
+  /* Status strip */
+  .status {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .online .dot { background: var(--good); box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 25%, transparent); }
+  .status .stat { display: grid; line-height: 1.15; }
+  .status .stat b { font: 700 20px var(--display); }
+  .status .grow { flex: 1; min-width: 0; }
+  #onlineBtn { min-height: 40px; padding: 8px 14px; }
+
+  /* Offer form */
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field { display: grid; gap: 4px; }
+  .field.wide { grid-column: 1 / -1; }
+  .field input, select, .settings input {
+    width: 100%; font: 700 26px var(--display); color: var(--text); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-height: 52px;
+  }
+  .field input.text { font: 500 18px var(--body); }
+  .field input::placeholder { color: var(--muted); opacity: .6; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chips button { min-height: 44px; min-width: 48px; padding: 6px 12px; font-size: 16px; }
+  .chips button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+  /* Verdict */
+  .verdict {
+    border-radius: 16px; padding: 14px 16px; border: 2px solid var(--line); background: var(--surface);
+    display: grid; gap: 8px;
+  }
+  .verdict.accept { border-color: var(--good); background: var(--good-bg); }
+  .verdict.decline { border-color: var(--bad); background: var(--bad-bg); }
+  .verdict .head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .verdict .word { font: 700 44px/1 var(--display); letter-spacing: .02em; }
+  .verdict.accept .word { color: var(--good); }
+  .verdict.decline .word { color: var(--bad); }
+  .verdict .score { font: 700 20px var(--display); }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .metrics div { display: grid; }
+  .metrics b { font: 700 24px var(--display); }
+  .reasons { margin: 0; padding-left: 18px; font-size: 15px; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* Spots */
+  .when { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+  .when select { font: 600 17px var(--body); min-height: 48px; }
+  .spot {
+    display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px;
+  }
+  .spot .rank { font: 700 30px/1 var(--display); color: var(--accent); text-align: center; }
+  .spot .name { font-weight: 600; overflow-wrap: anywhere; }
+  .spot .sub { font-size: 14px; color: var(--muted); }
+  .spot .go { min-height: 44px; padding: 8px 12px; }
+  .chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
+  .chip.hi { background: var(--good-bg); color: var(--good); }
+  #map { height: 300px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+  .leaflet-container { font: 14px var(--body); }
+  .empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 14px; padding: 16px; color: var(--muted); }
+
+  /* History */
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; }
+  .tile b { font: 700 24px var(--display); }
+  .log { display: grid; gap: 6px; }
+  .row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+  }
+  .row .when-t { font-size: 13px; color: var(--muted); }
+  .pill { font: 700 13px var(--display); letter-spacing: .04em; padding: 3px 8px; border-radius: 6px; }
+  .pill.good { background: var(--good-bg); color: var(--good); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .row button { min-height: 36px; padding: 4px 10px; font-size: 14px; }
+
+  /* Settings */
+  .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .settings input { font-size: 22px; min-height: 48px; }
+  .stack { display: grid; gap: 10px; }
+
+  /* Tab bar */
+  nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
+    background: var(--surface); border-top: 1px solid var(--line);
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  }
+  nav button { background: transparent; border: 0; min-height: 48px; font-size: 14px; color: var(--muted); border-radius: 10px; }
+  nav button[aria-selected="true"] { color: var(--accent); background: var(--surface-2); }
+
+  #toast {
+    position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 12px);
+    max-width: 528px; margin: 0 auto; z-index: 1100;
+    background: var(--text); color: var(--bg); border-radius: 10px; padding: 12px 14px; font-weight: 600;
+    transition: opacity .2s; opacity: 0; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+  @media (max-width: 360px) { .metrics b, .tile b { font-size: 20px; } .verdict .word { font-size: 38px; } }
+</style>
+</head>
+<body>
+<main>
+  <div id="status" class="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <div class="grow">
+      <div id="statusText" style="font-weight:600">Offline</div>
+      <div id="statusSub" class="muted" style="font-size:13px">Tracks your spot and miles</div>
+    </div>
+    <div class="stat"><span class="label">Miles</span><b id="milesToday" class="num">0.0</b></div>
+    <button id="onlineBtn" class="primary">Go online</button>
+  </div>
+
+  <!-- OFFER -->
+  <section id="tab-offer" class="panel stack" aria-label="Evaluate an offer">
+    <div class="fields">
+      <label class="field"><span class="label">Payout $</span><input id="payout" inputmode="decimal" enterkeyhint="next" placeholder="9.50" autocomplete="off"></label>
+      <label class="field"><span class="label">Total minutes</span><input id="min" inputmode="decimal" enterkeyhint="next" placeholder="20" autocomplete="off"></label>
+      <label class="field"><span class="label">To restaurant, mi</span><input id="pu" inputmode="decimal" enterkeyhint="next" placeholder="1.2" autocomplete="off"></label>
+      <label class="field"><span class="label">To customer, mi</span><input id="do" inputmode="decimal" enterkeyhint="done" placeholder="3.4" autocomplete="off"></label>
+      <div class="field">
+        <span class="label" id="waitLbl">Wait, min</span>
+        <div class="chips" role="group" aria-labelledby="waitLbl" data-group="wait">
+          <button type="button" data-v="0" aria-pressed="true">0</button>
+          <button type="button" data-v="5" aria-pressed="false">5</button>
+          <button type="button" data-v="10" aria-pressed="false">10+</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="label" id="ordLbl">Orders</span>
+        <div class="chips" role="group" aria-labelledby="ordLbl" data-group="orders">
+          <button type="button" data-v="1" aria-pressed="true">1</button>
+          <button type="button" data-v="2" aria-pressed="false">2</button>
+          <button type="button" data-v="3" aria-pressed="false">3</button>
+        </div>
+      </div>
+      <label class="field wide"><span class="label">Restaurant (optional)</span><input id="restaurant" class="text" list="restaurants" enterkeyhint="done" placeholder="e.g. Chipotle" autocomplete="off"></label>
+      <datalist id="restaurants"></datalist>
+    </div>
+
+    <div id="verdict" class="verdict">
+      <div class="head"><span class="word">—</span><span class="score num"></span></div>
+      <div class="muted">Enter the payout, miles and minutes from the offer card.</div>
+    </div>
+
+    <div class="actions">
+      <button id="tookBtn" class="good-btn" disabled>I took it</button>
+      <button id="passBtn" disabled>I passed</button>
+    </div>
+    <p class="muted" style="margin:0;font-size:14px">Logging each offer, taken or not, saves where you were and when. That history is what <b>Spots</b> learns from. Keep this page open while you drive; phones pause location when it's in the background.</p>
+  </section>
+
+  <!-- WHERE TO BE -->
+  <section id="tab-where" class="panel stack" aria-label="Where to be" hidden>
+    <h2>Where to be</h2>
+    <div class="when">
+      <label class="field"><span class="label">Day</span><select id="whenDay"></select></label>
+      <label class="field"><span class="label">Time</span><select id="whenHour"></select></label>
+      <button id="nowBtn">Now</button>
+    </div>
+    <p id="whereNote" class="muted" style="margin:0;font-size:14px"></p>
+    <div id="spots" class="stack"></div>
+    <div id="map" role="img" aria-label="Map of your logged offers and best spots"></div>
+    <p class="muted" style="margin:0;font-size:13px">Green dots are offers that met your targets, red dots missed them. Numbered squares are the spots above (about half a mile across).</p>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="tab-history" class="panel stack" aria-label="History" hidden>
+    <h2>Today</h2>
+    <div class="tiles">
+      <div class="tile"><span class="label">Earned</span><b id="tEarned" class="num">$0</b></div>
+      <div class="tile"><span class="label">Online</span><b id="tOnline" class="num">0h</b></div>
+      <div class="tile"><span class="label">Net $/hr</span><b id="tRate" class="num">—</b></div>
+    </div>
+    <p id="tNote" class="muted" style="margin:0;font-size:14px"></p>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <h2>Logged offers</h2>
+      <button id="exportBtn">Export CSV</button>
+    </div>
+    <div id="log" class="log"></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="tab-settings" class="panel stack" aria-label="Settings" hidden>
+    <h2>Your targets</h2>
+    <div class="settings">
+      <label class="field"><span class="label">Min net $/hr</span><input id="s_minHour" inputmode="decimal"></label>
+      <label class="field"><span class="label">Min net $/mile</span><input id="s_minMile" inputmode="decimal"></label>
+      <label class="field"><span class="label">Min payout $</span><input id="s_minPayout" inputmode="decimal"></label>
+      <label class="field"><span class="label">Max miles to restaurant</span><input id="s_maxPickup" inputmode="decimal"></label>
+      <label class="field"><span class="label">Car cost $/mile</span><input id="s_costPerMile" inputmode="decimal"></label>
+      <label class="field"><span class="label">Unpaid drive back</span><input id="s_returnFactor" inputmode="decimal"></label>
+    </div>
+    <p class="muted" style="margin:0;font-size:14px">Car cost covers gas and wear: 0.30 is gas only for most cars, 0.70 is the IRS rate. Unpaid drive back is the share of the delivery distance you drive back empty (0.5 = half).</p>
+    <button id="resetSettings">Reset to defaults</button>
+
+    <h2 style="margin-top:10px">Data</h2>
+    <p class="muted" style="margin:0;font-size:14px">Everything is stored only in this browser on this phone. Nothing is uploaded. Export a CSV now and then as a backup.</p>
+    <button id="demoBtn">Load 3 weeks of demo data</button>
+    <button id="undemoBtn">Remove demo data</button>
+    <button id="wipeBtn" class="danger">Delete all my data</button>
+  </section>
+</main>
+
+<nav role="tablist" aria-label="Sections">
+  <button role="tab" data-tab="offer" aria-selected="true">Offer</button>
+  <button role="tab" data-tab="where" aria-selected="false">Spots</button>
+  <button role="tab" data-tab="history" aria-selected="false">History</button>
+  <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+</nav>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+// ---------- storage (this phone only) ----------
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("ds." + k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) {
+    try { localStorage.setItem("ds." + k, JSON.stringify(v)); return true; }
+    catch { toast("Couldn't save. Browser storage is full or blocked."); return false; }
+  },
+};
+const DEFAULTS = { costPerMile: 0.30, minHour: 20, minMile: 1.5, minPayout: 5, maxPickup: 4, returnFactor: 0.5 };
+let settings = { ...DEFAULTS, ...store.get("settings", {}) };
+let offers = store.get("offers", []);      // {id,t,payout,pu,do,min,wait,orders,restaurant,lat,lng,took,demo}
+let presence = store.get("presence", {});  // "cell|dow|hour" -> minutes online there
+let days = store.get("days", {});          // "YYYY-MM-DD" -> {miles, minutes}
+const saveAll = () => { store.set("offers", offers); store.set("presence", presence); store.set("days", days); };
+
+// ---------- scoring (same rules as ubereats/offer.py) ----------
+function evaluate(o, s = settings) {
+  const paid = o.pu + o.do;
+  const totalMiles = paid + o.do * s.returnFactor;
+  const minPerMile = paid ? o.min / paid : 3;
+  const totalMin = o.min + (o.wait || 0) + o.do * s.returnFactor * minPerMile;
+  const net = o.payout - totalMiles * s.costPerMile;
+  const perHour = totalMin > 0 ? net / (totalMin / 60) : 0;
+  const perMile = totalMiles > 0 ? net / totalMiles : net;
+  const reasons = [];
+  if (o.payout < s.minPayout) reasons.push(`Payout $${o.payout.toFixed(2)} is under your $${s.minPayout.toFixed(2)} minimum`);
+  if (o.pu > s.maxPickup) reasons.push(`Restaurant is ${o.pu.toFixed(1)} mi away, over your ${s.maxPickup} mi limit`);
+  if (perHour < s.minHour) reasons.push(`$${perHour.toFixed(2)}/hr is under your $${s.minHour}/hr target`);
+  if (perMile < s.minMile) reasons.push(`$${perMile.toFixed(2)}/mi is under your $${s.minMile.toFixed(2)}/mi target`);
+  const hourPart = s.minHour ? Math.min(perHour / s.minHour, 2) / 2 : 1;
+  const milePart = s.minMile ? Math.min(perMile / s.minMile, 2) / 2 : 1;
+  return { totalMiles, totalMin, net, perHour, perMile, score: Math.max(0, 50 * hourPart + 50 * milePart), accept: reasons.length === 0, reasons };
+}
+
+// ---------- geo helpers ----------
+const CELL = 100; // 1/100 degree cells, roughly half a mile across
+const cellKey = (lat, lng) => `${Math.round(lat * CELL)}_${Math.round(lng * CELL)}`;
+const cellCenter = (key) => { const [a, b] = key.split("_").map(Number); return { lat: a / CELL, lng: b / CELL }; };
+function miles(a, b) {
+  const R = 3958.8, r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r, dLng = (b.lng - a.lng) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function compass(a, b) {
+  const r = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
+  const deg = (Math.atan2(y, x) / r + 360) % 360;
+  return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8];
+}
+const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+// ---------- location tracking ----------
+let watchId = null, lastFix = null, prevSample = null, anchor = null, wakeLock = null;
+
+function addPresence(sample, minutes) {
+  const d = new Date(sample.t);
+  const k = `${cellKey(sample.lat, sample.lng)}|${d.getDay()}|${d.getHours()}`;
+  presence[k] = (presence[k] || 0) + minutes;
+  const dk = dayKey(sample.t);
+  days[dk] = days[dk] || { miles: 0, minutes: 0 };
+  days[dk].minutes += minutes;
+}
+
+function onFix(p) {
+  const fix = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, t: p.timestamp || Date.now() };
+  lastFix = fix;
+  // Time online in each spot. Gaps (screen off, no signal) count at most 5 minutes.
+  if (prevSample && fix.t > prevSample.t) addPresence(prevSample, Math.min(fix.t - prevSample.t, 300000) / 60000);
+  prevSample = fix;
+  // Miles driven: ignore GPS jitter under ~30 m, poor fixes, and jumps faster than 100 mph.
+  if (fix.acc <= 50) {
+    if (!anchor) anchor = fix;
+    else {
+      const d = miles(anchor, fix), hrs = (fix.t - anchor.t) / 3600000;
+      if (hrs > 0 && d / hrs > 100) anchor = fix;
+      else if (d >= 0.02) {
+        const dk = dayKey(fix.t);
+        days[dk] = days[dk] || { miles: 0, minutes: 0 };
+        days[dk].miles += d;
+        anchor = fix;
+      }
+    }
+  }
+  store.set("presence", presence); store.set("days", days);
+  renderStatus();
+}
+
+function onGeoError(e) {
+  if (e.code === 1) {
+    goOffline();
+    toast("Location is blocked. Allow location for this site in your browser settings, then tap Go online.");
+  } else {
+    $("#statusSub").textContent = "Waiting for a GPS signal…";
+  }
+}
+
+async function keepAwake() {
+  try { if (navigator.wakeLock && document.visibilityState === "visible") wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+}
+
+function goOnline() {
+  if (!("geolocation" in navigator)) { toast("This browser can't share your location."); return; }
+  if (watchId !== null) return;
+  watchId = navigator.geolocation.watchPosition(onFix, onGeoError, { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
+  store.set("online", true);
+  keepAwake();
+  renderStatus();
+}
+function goOffline() {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null; prevSample = null; anchor = null;
+  try { wakeLock && wakeLock.release(); } catch {}
+  wakeLock = null;
+  store.set("online", false);
+  renderStatus();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && watchId !== null) keepAwake();
+});
+
+function renderStatus() {
+  const on = watchId !== null;
+  $("#status").classList.toggle("online", on);
+  $("#onlineBtn").textContent = on ? "Go offline" : "Go online";
+  $("#onlineBtn").classList.toggle("primary", !on);
+  const today = days[dayKey(Date.now())] || { miles: 0, minutes: 0 };
+  $("#milesToday").textContent = today.miles.toFixed(1);
+  $("#statusText").textContent = on ? "Online, tracking" : "Offline";
+  if (!on) $("#statusSub").textContent = "Tracks your spot and miles";
+  else if (!lastFix) $("#statusSub").textContent = "Finding you…";
+  else $("#statusSub").textContent = `GPS ±${Math.round(lastFix.acc)} m · ${fmtDuration(today.minutes)} today`;
+}
+
+// ---------- offer form ----------
+const num = (id) => { const v = parseFloat($(id).value.replace(",", ".")); return Number.isFinite(v) ? v : null; };
+const chipVal = (group) => Number(document.querySelector(`[data-group="${group}"] [aria-pressed="true"]`).dataset.v);
+
+function readOffer() {
+  const o = { payout: num("#payout"), pu: num("#pu"), do: num("#do"), min: num("#min"), wait: chipVal("wait"), orders: chipVal("orders") };
+  return [o.payout, o.pu, o.do, o.min].every((v) => v !== null && v >= 0) && o.min > 0 ? o : null;
+}
+
+function renderVerdict() {
+  const o = readOffer(), box = $("#verdict");
+  $("#tookBtn").disabled = $("#passBtn").disabled = !o;
+  if (!o) {
+    box.className = "verdict";
+    box.innerHTML = `<div class="head"><span class="word">—</span></div><div class="muted">Enter the payout, miles and minutes from the offer card.</div>`;
+    return;
+  }
+  const r = evaluate(o);
+  box.className = "verdict " + (r.accept ? "accept" : "decline");
+  box.innerHTML = `
+    <div class="head"><span class="word">${r.accept ? "ACCEPT" : "DECLINE"}</span><span class="score num">${Math.round(r.score)}/100</span></div>
+    <div class="metrics">
+      <div><span class="label">Net</span><b class="num">$${r.net.toFixed(2)}</b></div>
+      <div><span class="label">Per hour</span><b class="num">$${r.perHour.toFixed(0)}</b></div>
+      <div><span class="label">Per mile</span><b class="num">$${r.perMile.toFixed(2)}</b></div>
+    </div>
+    <div class="muted num" style="font-size:14px">${r.totalMiles.toFixed(1)} mi and ${Math.round(r.totalMin)} min, including the drive back</div>
+    ${r.reasons.length ? `<ul class="reasons">${r.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}`;
+}
+
+function currentPosition() {
+  if (lastFix && Date.now() - lastFix.t < 120000) return Promise.resolve(lastFix);
+  if (!("geolocation" in navigator)) return Promise.resolve(null);
+  return new Promise((res) => navigator.geolocation.getCurrentPosition(
+    (p) => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, t: Date.now() }),
+    () => res(null), { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }));
+}
+
+async function logOffer(took) {
+  const o = readOffer();
+  if (!o) return;
+  $("#tookBtn").disabled = $("#passBtn").disabled = true;
+  const pos = await currentPosition();
+  const entry = { id: Date.now().toString(36), t: Date.now(), ...o, restaurant: $("#restaurant").value.trim(), took,
+                  lat: pos ? +pos.lat.toFixed(5) : null, lng: pos ? +pos.lng.toFixed(5) : null };
+  offers.push(entry);
+  store.set("offers", offers);
+  ["#payout", "#pu", "#do", "#min", "#restaurant"].forEach((s) => ($(s).value = ""));
+  setChip("wait", 0); setChip("orders", 1);
+  renderVerdict(); renderRestaurants();
+  toast(`Logged $${o.payout.toFixed(2)} offer as ${took ? "taken" : "passed"}${pos ? "" : " (no location: turn on GPS for Where to be)"}`);
+  $("#payout").focus();
+}
+
+function setChip(group, v) {
+  $$(`[data-group="${group}"] button`).forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.v) === v)));
+}
+$$(".chips").forEach((g) => g.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  setChip(g.dataset.group, Number(b.dataset.v)); renderVerdict();
+}));
+["#payout", "#pu", "#do", "#min"].forEach((s, i, arr) => {
+  $(s).addEventListener("input", renderVerdict);
+  $(s).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); const next = ["#payout", "#min", "#pu", "#do"]; const j = next.indexOf(s); j < 3 ? $(next[j + 1]).focus() : $(s).blur(); }
+  });
+});
+$("#tookBtn").addEventListener("click", () => logOffer(true));
+$("#passBtn").addEventListener("click", () => logOffer(false));
+$("#onlineBtn").addEventListener("click", () => (watchId === null ? goOnline() : goOffline()));
+
+function renderRestaurants() {
+  const names = [...new Set(offers.map((o) => o.restaurant).filter(Boolean))].slice(-50);
+  $("#restaurants").innerHTML = names.map((n) => `<option value="${esc(n)}">`).join("");
+}
+
+// ---------- where to be ----------
+// Offers you logged at a similar time count fully; nearby hours and similar days count partly.
+const isWeekend = (d) => d === 0 || d === 6;
+function timeWeight(dow, hour, tDow, tHour) {
+  const dh = Math.min(Math.abs(hour - tHour), 24 - Math.abs(hour - tHour));
+  const hw = [1, 0.5, 0.2][dh] || 0;
+  const dw = dow === tDow ? 1 : isWeekend(dow) === isWeekend(tDow) ? 0.6 : 0.2;
+  return hw * dw;
+}
+
+function rankSpots(tDow, tHour) {
+  const cells = {};
+  const cell = (k) => (cells[k] = cells[k] || { key: k, w: 0, good: 0, goodNet: 0, hrs: 0, n: 0, names: {} });
+  for (const o of offers) {
+    if (o.lat == null) continue;
+    const d = new Date(o.t), w = timeWeight(d.getDay(), d.getHours(), tDow, tHour);
+    const c = cell(cellKey(o.lat, o.lng));
+    if (o.restaurant) c.names[o.restaurant] = (c.names[o.restaurant] || 0) + 1;
+    if (!w) continue;
+    const r = evaluate(o);
+    c.w += w; c.n += 1;
+    if (r.accept) { c.good += w; c.goodNet += w * r.net; }
+  }
+  for (const [k, minutes] of Object.entries(presence)) {
+    const [ck, dow, hour] = k.split("|");
+    const w = timeWeight(+dow, +hour, tDow, tHour);
+    if (w) cell(ck).hrs += (w * minutes) / 60;
+  }
+  const list = Object.values(cells).filter((c) => c.w > 0);
+  const totHrs = list.reduce((a, c) => a + c.hrs, 0), totGood = list.reduce((a, c) => a + c.good, 0);
+  const tracked = totHrs >= 1;
+  const baseRate = tracked ? totGood / totHrs : 0, K = 2; // pull spots with under ~2 hours of data toward your average
+  for (const c of list) {
+    c.avgGood = c.good ? c.goodNet / c.good : 0;
+    c.rate = tracked ? (c.good + baseRate * K) / (c.hrs + K) : null;       // good offers per hour online here
+    c.value = tracked ? c.rate * c.avgGood : c.good * c.avgGood;          // expected good-offer $ per hour (or total if untracked)
+    const top = Object.entries(c.names).sort((a, b) => b[1] - a[1])[0];
+    c.label = top ? `Near ${top[0]}` : `Spot ${cellCenter(c.key).lat.toFixed(2)}, ${cellCenter(c.key).lng.toFixed(2)}`;
+  }
+  list.sort((a, b) => b.value - a.value);
+  return { list: list.filter((c) => c.good > 0).slice(0, 5), tracked, all: list };
+}
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function fmtHour(h) { return `${h % 12 || 12} ${h < 12 ? "am" : "pm"}`; }
+function initWhen() {
+  $("#whenDay").innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join("");
+  $("#whenHour").innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${fmtHour(h)}</option>`).join("");
+  setNow();
+  $("#whenDay").addEventListener("change", renderWhere);
+  $("#whenHour").addEventListener("change", renderWhere);
+  $("#nowBtn").addEventListener("click", () => { setNow(); renderWhere(); });
+}
+function setNow() { const d = new Date(); $("#whenDay").value = d.getDay(); $("#whenHour").value = d.getHours(); }
+
+let map = null, mapLayer = null;
+function renderWhere() {
+  const tDow = +$("#whenDay").value, tHour = +$("#whenHour").value;
+  const { list, tracked } = rankSpots(tDow, tHour);
+  const located = offers.filter((o) => o.lat != null).length;
+  const here = lastFix;
+  if (located < 15) {
+    $("#whereNote").textContent = "";
+    $("#spots").innerHTML = `<div class="empty">You have ${located} offer${located === 1 ? "" : "s"} logged with a location. Log about 20 over a few shifts, taken or passed, and your best spots for each time of day show up here. To try it now, load demo data in Settings.</div>`;
+  } else if (!list.length) {
+    $("#whereNote").textContent = "";
+    $("#spots").innerHTML = `<div class="empty">No offers that met your targets were logged around ${fmtHour(tHour)} on days like ${DAYS[tDow]}. Try another time, or keep logging.</div>`;
+  } else {
+    $("#whereNote").textContent = tracked
+      ? `Ranked by how much good-offer money came in per hour you were online there, around ${fmtHour(tHour)} on ${DAYS[tDow]}s and similar days.`
+      : `Ranked by good offers logged around ${fmtHour(tHour)} on ${DAYS[tDow]}s and similar days. Go online while you drive so it can also count the time you spent in each spot.`;
+    $("#spots").innerHTML = list.map((c, i) => {
+      const ctr = cellCenter(c.key);
+      const dist = here ? `${miles(here, ctr).toFixed(1)} mi ${compass(here, ctr)} · ` : "";
+      const conf = c.n >= 12 ? `<span class="chip hi">${c.n} offers</span>` : `<span class="chip">${c.n} offer${c.n === 1 ? "" : "s"}</span>`;
+      const rate = tracked ? `${c.rate.toFixed(1)} good offers/hr · ` : "";
+      return `<div class="spot">
+        <div class="rank">${i + 1}</div>
+        <div><div class="name">${esc(c.label)}</div>
+          <div class="sub num">${dist}${rate}avg good offer $${c.avgGood.toFixed(2)} net</div>
+          <div style="margin-top:4px">${conf}</div></div>
+        <a class="btn go" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${ctr.lat},${ctr.lng}">Go</a>
+      </div>`;
+    }).join("");
+  }
+  drawMap(list);
+}
+
+function drawMap(list) {
+  if (!window.L) { $("#map").innerHTML = `<div class="empty" style="border:0">The map needs an internet connection.</div>`; return; }
+  const pts = offers.filter((o) => o.lat != null);
+  if (!map) {
+    map = L.map("map", { zoomControl: true, attributionControl: true });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(map);
+    mapLayer = L.layerGroup().addTo(map);
+  }
+  setTimeout(() => map.invalidateSize(), 0);
+  mapLayer.clearLayers();
+  const css = getComputedStyle(document.documentElement);
+  const good = css.getPropertyValue("--good").trim(), bad = css.getPropertyValue("--bad").trim(), acc = css.getPropertyValue("--accent").trim();
+  const bounds = [];
+  for (const o of pts.slice(-600)) {
+    const ok = evaluate(o).accept;
+    L.circleMarker([o.lat, o.lng], { radius: 4, weight: 0, fillOpacity: 0.7, fillColor: ok ? good : bad }).addTo(mapLayer);
+    bounds.push([o.lat, o.lng]);
+  }
+  list.forEach((c, i) => {
+    const ctr = cellCenter(c.key), h = 0.5 / CELL;
+    L.rectangle([[ctr.lat - h, ctr.lng - h], [ctr.lat + h, ctr.lng + h]], { color: acc, weight: 2, fillOpacity: 0.12 }).addTo(mapLayer);
+    L.marker([ctr.lat, ctr.lng], { icon: L.divIcon({ className: "", html: `<div style="font:700 18px var(--display);color:var(--accent-ink);background:var(--accent);border-radius:50%;width:26px;height:26px;display:grid;place-items:center">${i + 1}</div>`, iconSize: [26, 26] }) }).addTo(mapLayer);
+  });
+  if (lastFix) {
+    L.circleMarker([lastFix.lat, lastFix.lng], { radius: 8, color: "#fff", weight: 3, fillColor: "#3b82f6", fillOpacity: 1 }).addTo(mapLayer);
+    bounds.push([lastFix.lat, lastFix.lng]);
+  }
+  if (bounds.length) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
+  else map.setView([39.5, -98.35], 4);
+}
+
+// ---------- history ----------
+function fmtDuration(m) { const h = Math.floor(m / 60), mm = Math.round(m % 60); return h ? `${h}h ${mm}m` : `${mm}m`; }
+function renderHistory() {
+  const dk = dayKey(Date.now()), today = days[dk] || { miles: 0, minutes: 0 };
+  const taken = offers.filter((o) => o.took && dayKey(o.t) === dk);
+  const earned = taken.reduce((a, o) => a + o.payout, 0);
+  const net = earned - today.miles * settings.costPerMile;
+  $("#tEarned").textContent = `$${earned.toFixed(0)}`;
+  $("#tOnline").textContent = fmtDuration(today.minutes);
+  $("#tRate").textContent = today.minutes >= 15 ? `$${(net / (today.minutes / 60)).toFixed(0)}` : "—";
+  $("#tNote").textContent = `${taken.length} deliver${taken.length === 1 ? "y" : "ies"} taken, ${today.miles.toFixed(1)} tracked miles. Net takes off $${settings.costPerMile.toFixed(2)} a mile for gas and wear.`;
+  const recent = offers.slice(-60).reverse();
+  $("#log").innerHTML = recent.length ? recent.map((o) => {
+    const r = evaluate(o), d = new Date(o.t);
+    return `<div class="row" data-id="${o.id}">
+      <div><div class="num" style="font-weight:600">$${o.payout.toFixed(2)} · ${(o.pu + o.do).toFixed(1)} mi · ${o.min} min</div>
+        <div class="when-t">${d.toLocaleDateString([], { weekday: "short" })} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${o.restaurant ? " · " + esc(o.restaurant) : ""} · ${o.took ? "taken" : "passed"}${o.demo ? " · demo" : ""}</div></div>
+      <span class="pill ${r.accept ? "good" : "bad"}">${r.accept ? "GOOD" : "LOW"}</span>
+      <button data-del="${o.id}" aria-label="Delete this offer">Delete</button>
+    </div>`;
+  }).join("") : `<div class="empty">No offers logged yet.</div>`;
+}
+$("#log").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-del]"); if (!b) return;
+  if (b.dataset.armed) { offers = offers.filter((o) => o.id !== b.dataset.del); store.set("offers", offers); renderHistory(); toast("Offer deleted"); }
+  else { b.dataset.armed = "1"; b.textContent = "Sure?"; b.classList.add("danger"); setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "Delete"; b.classList.remove("danger"); } }, 3000); }
+});
+
+// CSV matches the Python tool's log format, plus lat/lng.
+$("#exportBtn").addEventListener("click", () => {
+  const q = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  const iso = (t) => { const d = new Date(t); return `${dayKey(t)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const head = "timestamp,restaurant,zone,payout,pickup_miles,dropoff_miles,est_minutes,restaurant_wait_min,orders,accepted,lat,lng";
+  const rows = offers.map((o) => [iso(o.t), o.restaurant || "", o.lat != null ? cellKey(o.lat, o.lng) : "", o.payout, o.pu, o.do, o.min, o.wait || 0, o.orders || 1, o.took ? 1 : 0, o.lat ?? "", o.lng ?? ""].map(q).join(","));
+  const blob = new Blob([head + "\n" + rows.join("\n") + "\n"], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = `offers-${dayKey(Date.now())}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+// ---------- settings ----------
+const SKEYS = Object.keys(DEFAULTS);
+function renderSettings() { SKEYS.forEach((k) => ($("#s_" + k).value = settings[k])); }
+SKEYS.forEach((k) => $("#s_" + k).addEventListener("change", (e) => {
+  const v = parseFloat(e.target.value.replace(",", "."));
+  if (Number.isFinite(v) && v >= 0) { settings[k] = v; store.set("settings", settings); toast("Saved"); renderVerdict(); }
+  else { e.target.value = settings[k]; toast("Enter a number, 0 or more"); }
+}));
+$("#resetSettings").addEventListener("click", () => { settings = { ...DEFAULTS }; store.set("settings", settings); renderSettings(); renderVerdict(); toast("Targets reset"); });
+
+function armConfirm(btn, label, action) {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = label; action(); }
+    else { btn.dataset.armed = "1"; btn.textContent = "Tap again to confirm"; setTimeout(() => { delete btn.dataset.armed; btn.textContent = label; }, 4000); }
+  });
+}
+armConfirm($("#wipeBtn"), "Delete all my data", () => { offers = []; presence = {}; days = {}; saveAll(); renderAll(); toast("All data deleted"); });
+$("#undemoBtn").addEventListener("click", () => {
+  offers = offers.filter((o) => !o.demo);
+  const demoPresence = store.get("demoPresence", {});
+  for (const [k, m] of Object.entries(demoPresence)) { if (presence[k]) { presence[k] -= m; if (presence[k] <= 0.01) delete presence[k]; } }
+  store.set("demoPresence", {}); saveAll(); renderAll(); toast("Demo data removed");
+});
+
+// Demo: three weeks of lunch and dinner shifts around you, with a few spots that pay better at certain times.
+$("#demoBtn").addEventListener("click", () => {
+  if (offers.some((o) => o.demo)) { toast("Demo data is already loaded"); return; }
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const c = lastFix || { lat: 40.7484, lng: -73.9857 };
+  const spots = [
+    { dLat: 0.012, dLng: -0.018, name: "Chipotle", lunch: 0.5, dinner: 0.9 },
+    { dLat: -0.008, dLng: 0.011, name: "Shake Shack", lunch: 0.8, dinner: 0.5 },
+    { dLat: 0.021, dLng: 0.019, name: "Panda Express", lunch: 0.4, dinner: 0.6, weekend: 0.9 },
+    { dLat: -0.024, dLng: -0.02, name: "McDonald's", lunch: 0.3, dinner: 0.3 },
+    { dLat: 0.002, dLng: 0.003, name: "Sweetgreen", lunch: 0.7, dinner: 0.2 },
+  ];
+  const demoPresence = {};
+  const now = Date.now();
+  for (let day = 21; day >= 1; day--) {
+    for (const hour of [11, 12, 13, 17, 18, 19, 20]) {
+      const t0 = new Date(now - day * 86400000); t0.setHours(hour, 0, 0, 0);
+      const s = spots[Math.floor(rnd() * spots.length)];
+      const ctr = cellCenter(cellKey(c.lat + s.dLat, c.lng + s.dLng)), lat = ctr.lat, lng = ctr.lng;
+      const wknd = isWeekend(t0.getDay());
+      const q = wknd && s.weekend ? s.weekend : hour < 15 ? s.lunch : s.dinner;
+      const pk = `${cellKey(lat, lng)}|${t0.getDay()}|${hour}`;
+      demoPresence[pk] = (demoPresence[pk] || 0) + 60;
+      const n = 1 + Math.floor(rnd() * 3 + q * 2);
+      for (let i = 0; i < n; i++) {
+        const dist = 1.5 + rnd() * 5, good = rnd() < q;
+        const payout = +(good ? 7 + dist * 1.8 + rnd() * 5 : 3 + dist * 0.6 + rnd() * 2).toFixed(2);
+        const pu = +(0.2 + rnd() * (good ? 1.5 : 4)).toFixed(1), dropoff = +dist.toFixed(1);
+        offers.push({ id: "demo" + day + hour + i, t: t0.getTime() + i * 1200000 + Math.floor(rnd() * 600000), payout, pu, do: dropoff,
+          min: Math.round(6 + (pu + dropoff) * 3.2), wait: rnd() < 0.3 ? 5 : 0, orders: 1, restaurant: s.name, took: good,
+          lat: +(lat + (rnd() - 0.5) * 0.006).toFixed(5), lng: +(lng + (rnd() - 0.5) * 0.006).toFixed(5), demo: true });
+      }
+    }
+  }
+  offers.sort((a, b) => a.t - b.t);
+  for (const [k, m] of Object.entries(demoPresence)) presence[k] = (presence[k] || 0) + m;
+  store.set("demoPresence", demoPresence);
+  saveAll(); renderAll();
+  toast(lastFix ? "Loaded demo data around your location" : "Loaded demo data around New York. Go online first to center it on you.");
+});
+
+// ---------- tabs, toast, boot ----------
+function showTab(name) {
+  $$("nav button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  $$(".panel").forEach((p) => (p.hidden = p.id !== "tab-" + name));
+  if (name === "where") renderWhere();
+  if (name === "history") renderHistory();
+  if (name === "settings") renderSettings();
+  try { sessionStorage.setItem("ds.tab", name); } catch {}
+  window.scrollTo(0, 0);
+}
+$$("nav button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+let toastTimer;
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }
+
+function renderAll() { renderStatus(); renderVerdict(); renderRestaurants(); renderHistory(); renderSettings(); if (!$("#tab-where").hidden) renderWhere(); }
+
+initWhen();
+renderAll();
+let startTab = "offer"; try { startTab = sessionStorage.getItem("ds.tab") || "offer"; } catch {}
+showTab(startTab);
+if (store.get("online", false)) goOnline();
+</script>
+</body>
+</html>

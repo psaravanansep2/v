@@ -42,6 +42,15 @@ class InsightsTest(unittest.TestCase):
         self.assertEqual(data["restaurant"][0]["key"], "Chipotle")
         self.assertEqual(data["zone"][-1]["key"], "Suburbs")
 
+    def test_ranks_map_spots_from_lat_lng(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "log.csv")
+            for day in range(1, 4):
+                log_offer(path, Offer(15, 1, 3, 18), when=datetime(2026, 9, day, 18), lat=40.7512, lng=-73.9901)
+                log_offer(path, Offer(4, 3, 5, 30), when=datetime(2026, 9, day, 18), lat=40.7201, lng=-74.0102)
+            data = insights(path)
+        self.assertEqual([s["key"] for s in data["spot"]], ["40.75,-73.99", "40.72,-74.01"])
+
 
 if __name__ == "__main__":
     unittest.main()

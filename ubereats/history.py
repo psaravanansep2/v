@@ -8,10 +8,10 @@ from datetime import datetime
 from .offer import Offer, Settings, evaluate
 
 FIELDS = ["timestamp", "restaurant", "zone", "payout", "pickup_miles",
-          "dropoff_miles", "est_minutes", "restaurant_wait_min", "orders", "accepted"]
+          "dropoff_miles", "est_minutes", "restaurant_wait_min", "orders", "accepted", "lat", "lng"]
 
 
-def log_offer(path, offer: Offer, restaurant="", zone="", accepted=None, when=None):
+def log_offer(path, offer: Offer, restaurant="", zone="", accepted=None, when=None, lat=None, lng=None):
     new_file = not os.path.exists(path)
     with open(path, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
@@ -28,6 +28,8 @@ def log_offer(path, offer: Offer, restaurant="", zone="", accepted=None, when=No
             "restaurant_wait_min": offer.restaurant_wait_min,
             "orders": offer.orders,
             "accepted": "" if accepted is None else int(bool(accepted)),
+            "lat": "" if lat is None else lat,
+            "lng": "" if lng is None else lng,
         })
 
 
@@ -47,10 +49,20 @@ def load(path):
     return rows
 
 
+def _spot(row):
+    try:
+        return f"{float(row['lat']):.2f},{float(row['lng']):.2f}"
+    except (KeyError, TypeError, ValueError):
+        return ""
+
+
 def insights(path, s: Settings = Settings(), min_offers=3):
-    """Rank hours, weekdays, zones and restaurants by average net $/hr and good-offer rate."""
-    groups = {"hour": defaultdict(list), "weekday": defaultdict(list),
-              "zone": defaultdict(list), "restaurant": defaultdict(list)}
+    """Rank hours, weekdays, zones, restaurants and map spots by average net $/hr and good-offer rate.
+
+    A spot is a ~half-mile square (lat/lng rounded to 2 decimals), the same grid the phone page uses.
+    """
+    groups = {"hour": defaultdict(list), "weekday": defaultdict(list), "zone": defaultdict(list),
+              "restaurant": defaultdict(list), "spot": defaultdict(list)}
     for ts, row, offer in load(path):
         sc = evaluate(offer, s)
         keys = {
@@ -58,6 +70,7 @@ def insights(path, s: Settings = Settings(), min_offers=3):
             "weekday": ts.strftime("%A"),
             "zone": row.get("zone") or "",
             "restaurant": row.get("restaurant") or "",
+            "spot": _spot(row),
         }
         for dim, key in keys.items():
             if key:

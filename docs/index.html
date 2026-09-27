@@ -48,6 +48,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
@@ -152,6 +153,13 @@
   .pill.bad { background: var(--bad-bg); color: var(--bad); }
   .row button { min-height: 36px; padding: 4px 10px; font-size: 14px; }
 
+  .modebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  body.quick .full-only, body:not(.quick) .quick-only { display: none; }
+  .hint { font-size: 14px; color: var(--muted); margin: -4px 0 0; }
+  .importbox { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+  .importbox select { font: 500 15px var(--body); min-height: 44px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+
   /* Settings */
   .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .settings input { font-size: 22px; min-height: 48px; }
@@ -192,11 +200,19 @@
 
   <!-- OFFER -->
   <section id="tab-offer" class="panel stack" aria-label="Evaluate an offer">
+    <div class="modebar">
+      <span class="label" id="modeLbl">Entry</span>
+      <div class="chips" role="group" aria-labelledby="modeLbl" data-group="mode">
+        <button type="button" data-v="1" aria-pressed="true">Quick</button>
+        <button type="button" data-v="0" aria-pressed="false">Full</button>
+      </div>
+    </div>
     <div class="fields">
       <label class="field"><span class="label">Payout $</span><input id="payout" inputmode="decimal" enterkeyhint="next" placeholder="9.50" autocomplete="off"></label>
-      <label class="field"><span class="label">Total minutes</span><input id="min" inputmode="decimal" enterkeyhint="next" placeholder="20" autocomplete="off"></label>
-      <label class="field"><span class="label">To restaurant, mi</span><input id="pu" inputmode="decimal" enterkeyhint="next" placeholder="1.2" autocomplete="off"></label>
-      <label class="field"><span class="label">To customer, mi</span><input id="do" inputmode="decimal" enterkeyhint="done" placeholder="3.4" autocomplete="off"></label>
+      <label class="field quick-only"><span class="label">Total miles</span><input id="tmiles" inputmode="decimal" enterkeyhint="next" placeholder="4.6" autocomplete="off"></label>
+      <label class="field"><span class="label" id="minLbl">Total minutes</span><input id="min" inputmode="decimal" enterkeyhint="next" placeholder="20" autocomplete="off"></label>
+      <label class="field full-only"><span class="label">To restaurant, mi</span><input id="pu" inputmode="decimal" enterkeyhint="next" placeholder="1.2" autocomplete="off"></label>
+      <label class="field full-only"><span class="label">To customer, mi</span><input id="do" inputmode="decimal" enterkeyhint="done" placeholder="3.4" autocomplete="off"></label>
       <div class="field">
         <span class="label" id="waitLbl">Wait, min</span>
         <div class="chips" role="group" aria-labelledby="waitLbl" data-group="wait">
@@ -273,6 +289,22 @@
     <p class="muted" style="margin:0;font-size:14px">Car cost covers gas and wear: 0.30 is gas only for most cars, 0.70 is the IRS rate. Unpaid drive back is the share of the delivery distance you drive back empty (0.5 = half).</p>
     <button id="resetSettings">Reset to defaults</button>
 
+    <h2 style="margin-top:10px">Import from Uber</h2>
+    <p class="muted" style="margin:0;font-size:14px">Ask Uber for a copy of your data: sign in at <b>privacy.uber.com</b> with the account you deliver on and request a download. Uber emails you a .zip file, usually within a few days. Pick that file here (the .zip or a .csv from inside it). Your past deliveries fill in <b>Spots</b> with their time, place and pay. It can't include offers you declined.</p>
+    <label class="btn primary" for="importFile">Choose Uber file</label>
+    <input id="importFile" class="sr-only" type="file" accept=".zip,.csv,text/csv,application/zip">
+    <div id="importBox" class="importbox stack" hidden>
+      <label class="field" id="importFileRow"><span class="label">File from the download</span><select id="importWhich"></select></label>
+      <p class="muted" style="margin:0;font-size:14px">Check that each item points at the right column. Items marked * are required.</p>
+      <div id="importMap" class="settings"></div>
+      <p id="importPreview" style="margin:0;font-weight:600"></p>
+      <div class="actions">
+        <button id="importGo" class="good-btn" disabled>Import</button>
+        <button id="importCancel">Cancel</button>
+      </div>
+    </div>
+    <button id="unimportBtn">Remove imported trips</button>
+
     <h2 style="margin-top:10px">Data</h2>
     <p class="muted" style="margin:0;font-size:14px">Everything is stored only in this browser on this phone. Nothing is uploaded. Export a CSV now and then as a backup.</p>
     <button id="demoBtn">Load 3 weeks of demo data</button>
@@ -290,6 +322,7 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
@@ -308,7 +341,8 @@ let settings = { ...DEFAULTS, ...store.get("settings", {}) };
 let offers = store.get("offers", []);      // {id,t,payout,pu,do,min,wait,orders,restaurant,lat,lng,took,demo}
 let presence = store.get("presence", {});  // "cell|dow|hour" -> minutes online there
 let days = store.get("days", {});          // "YYYY-MM-DD" -> {miles, minutes}
-const saveAll = () => { store.set("offers", offers); store.set("presence", presence); store.set("days", days); };
+let importPresence = store.get("importPresence", {}); // same keys, estimated from imported Uber trips
+const saveAll = () => { store.set("offers", offers); store.set("presence", presence); store.set("days", days); store.set("importPresence", importPresence); };
 
 // ---------- scoring (same rules as ubereats/offer.py) ----------
 function evaluate(o, s = settings) {
@@ -321,7 +355,7 @@ function evaluate(o, s = settings) {
   const perMile = totalMiles > 0 ? net / totalMiles : net;
   const reasons = [];
   if (o.payout < s.minPayout) reasons.push(`Payout $${o.payout.toFixed(2)} is under your $${s.minPayout.toFixed(2)} minimum`);
-  if (o.pu > s.maxPickup) reasons.push(`Restaurant is ${o.pu.toFixed(1)} mi away, over your ${s.maxPickup} mi limit`);
+  if (!o.quick && o.pu > s.maxPickup) reasons.push(`Restaurant is ${o.pu.toFixed(1)} mi away, over your ${s.maxPickup} mi limit`);
   if (perHour < s.minHour) reasons.push(`$${perHour.toFixed(2)}/hr is under your $${s.minHour}/hr target`);
   if (perMile < s.minMile) reasons.push(`$${perMile.toFixed(2)}/mi is under your $${s.minMile.toFixed(2)}/mi target`);
   const hourPart = s.minHour ? Math.min(perHour / s.minHour, 2) / 2 : 1;
@@ -434,9 +468,37 @@ function renderStatus() {
 const num = (id) => { const v = parseFloat($(id).value.replace(",", ".")); return Number.isFinite(v) ? v : null; };
 const chipVal = (group) => Number(document.querySelector(`[data-group="${group}"] [aria-pressed="true"]`).dataset.v);
 
+const isQuick = () => document.body.classList.contains("quick");
+function applyMode(quick) {
+  document.body.classList.toggle("quick", quick);
+  setChip("mode", quick ? 1 : 0);
+  $("#minLbl").textContent = quick ? "Minutes (optional)" : "Total minutes";
+  $("#min").placeholder = quick ? "auto" : "20";
+  store.set("quick", quick);
+  renderVerdict();
+}
+
+// Quick mode guesses minutes from your own full-mode offers: a fixed ~4 min plus your usual minutes per mile.
+function minutesPerMile() {
+  const xs = offers.filter((o) => !o.quick && !o.imported && o.pu + o.do > 0.5).map((o) => Math.max(0, o.min - 4) / (o.pu + o.do)).sort((a, b) => a - b);
+  return xs.length >= 5 ? xs[Math.floor(xs.length / 2)] : 3.2;
+}
+
 function readOffer() {
-  const o = { payout: num("#payout"), pu: num("#pu"), do: num("#do"), min: num("#min"), wait: chipVal("wait"), orders: chipVal("orders") };
-  return [o.payout, o.pu, o.do, o.min].every((v) => v !== null && v >= 0) && o.min > 0 ? o : null;
+  const base = { payout: num("#payout"), wait: chipVal("wait"), orders: chipVal("orders") };
+  let o;
+  if (isQuick()) {
+    const total = num("#tmiles");
+    if (base.payout === null || total === null || base.payout < 0 || total < 0) return null;
+    const typed = num("#min");
+    // Uber shows total distance only; assume about a quarter of it is the drive to the restaurant.
+    o = { ...base, pu: +(total * 0.25).toFixed(2), do: +(total * 0.75).toFixed(2), quick: true,
+          min: typed && typed > 0 ? typed : Math.round(4 + total * minutesPerMile()), minGuessed: !(typed && typed > 0) };
+  } else {
+    o = { ...base, pu: num("#pu"), do: num("#do"), min: num("#min") };
+    if (![o.payout, o.pu, o.do, o.min].every((v) => v !== null && v >= 0)) return null;
+  }
+  return o.min > 0 ? o : null;
 }
 
 function renderVerdict() {
@@ -444,7 +506,7 @@ function renderVerdict() {
   $("#tookBtn").disabled = $("#passBtn").disabled = !o;
   if (!o) {
     box.className = "verdict";
-    box.innerHTML = `<div class="head"><span class="word">—</span></div><div class="muted">Enter the payout, miles and minutes from the offer card.</div>`;
+    box.innerHTML = `<div class="head"><span class="word">—</span></div><div class="muted">${isQuick() ? "Enter the payout and total miles from the offer card. Add minutes if you have a second." : "Enter the payout, miles and minutes from the offer card."}</div>`;
     return;
   }
   const r = evaluate(o);
@@ -456,7 +518,7 @@ function renderVerdict() {
       <div><span class="label">Per hour</span><b class="num">$${r.perHour.toFixed(0)}</b></div>
       <div><span class="label">Per mile</span><b class="num">$${r.perMile.toFixed(2)}</b></div>
     </div>
-    <div class="muted num" style="font-size:14px">${r.totalMiles.toFixed(1)} mi and ${Math.round(r.totalMin)} min, including the drive back</div>
+    <div class="muted num" style="font-size:14px">${r.totalMiles.toFixed(1)} mi and ${Math.round(r.totalMin)} min, including the drive back${o.minGuessed ? `. Trip time guessed at ${o.min} min` : ""}</div>
     ${r.reasons.length ? `<ul class="reasons">${r.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}`;
 }
 
@@ -471,16 +533,17 @@ function currentPosition() {
 async function logOffer(took) {
   const o = readOffer();
   if (!o) return;
+  delete o.minGuessed;
   $("#tookBtn").disabled = $("#passBtn").disabled = true;
   const pos = await currentPosition();
   const entry = { id: Date.now().toString(36), t: Date.now(), ...o, restaurant: $("#restaurant").value.trim(), took,
                   lat: pos ? +pos.lat.toFixed(5) : null, lng: pos ? +pos.lng.toFixed(5) : null };
   offers.push(entry);
   store.set("offers", offers);
-  ["#payout", "#pu", "#do", "#min", "#restaurant"].forEach((s) => ($(s).value = ""));
+  ["#payout", "#tmiles", "#pu", "#do", "#min", "#restaurant"].forEach((s) => ($(s).value = ""));
   setChip("wait", 0); setChip("orders", 1);
   renderVerdict(); renderRestaurants();
-  toast(`Logged $${o.payout.toFixed(2)} offer as ${took ? "taken" : "passed"}${pos ? "" : " (no location: turn on GPS for Where to be)"}`);
+  toast(`Logged $${o.payout.toFixed(2)} offer as ${took ? "taken" : "passed"}${pos ? "" : " (no location: turn on GPS for Spots)"}`);
   $("#payout").focus();
 }
 
@@ -489,12 +552,17 @@ function setChip(group, v) {
 }
 $$(".chips").forEach((g) => g.addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
+  if (g.dataset.group === "mode") { applyMode(b.dataset.v === "1"); return; }
   setChip(g.dataset.group, Number(b.dataset.v)); renderVerdict();
 }));
-["#payout", "#pu", "#do", "#min"].forEach((s, i, arr) => {
+["#payout", "#tmiles", "#min", "#pu", "#do"].forEach((s) => {
   $(s).addEventListener("input", renderVerdict);
   $(s).addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); const next = ["#payout", "#min", "#pu", "#do"]; const j = next.indexOf(s); j < 3 ? $(next[j + 1]).focus() : $(s).blur(); }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const order = isQuick() ? ["#payout", "#tmiles", "#min"] : ["#payout", "#min", "#pu", "#do"];
+    const j = order.indexOf(s);
+    j >= 0 && j < order.length - 1 ? $(order[j + 1]).focus() : $(s).blur();
   });
 });
 $("#tookBtn").addEventListener("click", () => logOffer(true));
@@ -529,7 +597,7 @@ function rankSpots(tDow, tHour) {
     c.w += w; c.n += 1;
     if (r.accept) { c.good += w; c.goodNet += w * r.net; }
   }
-  for (const [k, minutes] of Object.entries(presence)) {
+  for (const [k, minutes] of [...Object.entries(presence), ...Object.entries(importPresence)]) {
     const [ck, dow, hour] = k.split("|");
     const w = timeWeight(+dow, +hour, tDow, tHour);
     if (w) cell(ck).hrs += (w * minutes) / 60;
@@ -641,7 +709,7 @@ function renderHistory() {
     const r = evaluate(o), d = new Date(o.t);
     return `<div class="row" data-id="${o.id}">
       <div><div class="num" style="font-weight:600">$${o.payout.toFixed(2)} · ${(o.pu + o.do).toFixed(1)} mi · ${o.min} min</div>
-        <div class="when-t">${d.toLocaleDateString([], { weekday: "short" })} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${o.restaurant ? " · " + esc(o.restaurant) : ""} · ${o.took ? "taken" : "passed"}${o.demo ? " · demo" : ""}</div></div>
+        <div class="when-t">${d.toLocaleDateString([], { weekday: "short" })} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${o.restaurant ? " · " + esc(o.restaurant) : ""} · ${o.took ? "taken" : "passed"}${o.demo ? " · demo" : ""}${o.imported ? " · from Uber" : ""}${o.quick ? " · quick" : ""}</div></div>
       <span class="pill ${r.accept ? "good" : "bad"}">${r.accept ? "GOOD" : "LOW"}</span>
       <button data-del="${o.id}" aria-label="Delete this offer">Delete</button>
     </div>`;
@@ -682,7 +750,7 @@ function armConfirm(btn, label, action) {
     else { btn.dataset.armed = "1"; btn.textContent = "Tap again to confirm"; setTimeout(() => { delete btn.dataset.armed; btn.textContent = label; }, 4000); }
   });
 }
-armConfirm($("#wipeBtn"), "Delete all my data", () => { offers = []; presence = {}; days = {}; saveAll(); renderAll(); toast("All data deleted"); });
+armConfirm($("#wipeBtn"), "Delete all my data", () => { offers = []; presence = {}; days = {}; importPresence = {}; saveAll(); renderAll(); toast("All data deleted"); });
 $("#undemoBtn").addEventListener("click", () => {
   offers = offers.filter((o) => !o.demo);
   const demoPresence = store.get("demoPresence", {});
@@ -731,6 +799,203 @@ $("#demoBtn").addEventListener("click", () => {
   toast(lastFix ? "Loaded demo data around your location" : "Loaded demo data around New York. Go online first to center it on you.");
 });
 
+// ---------- import from Uber's data download ----------
+// Uber's export has changed over the years, so columns are matched by name and the driver can correct the match.
+const IMPORT_FIELDS = [
+  { k: "time", label: "Trip time *", req: true, names: ["requesttime", "requesttimestamp", "offertime", "begintriptime", "begintriptimestamp", "pickuptime", "triptime", "tripstarttime", "starttime", "localtime", "timestamp", "datetime", "date"] },
+  { k: "lat", label: "Pickup latitude *", req: true, names: ["begintriplat", "begintriplatitude", "pickuplat", "pickuplatitude", "restaurantlat", "restaurantlatitude", "startlat", "startlatitude", "latitude", "lat"] },
+  { k: "lng", label: "Pickup longitude *", req: true, names: ["begintriplng", "begintriplon", "begintriplong", "begintriplongitude", "pickuplng", "pickuplon", "pickuplongitude", "restaurantlng", "restaurantlongitude", "startlng", "startlon", "startlongitude", "longitude", "lng", "lon"] },
+  { k: "pay", label: "Pay *", req: true, names: ["totalearnings", "totalpay", "earnings", "netearnings", "payout", "driverpay", "fareamount", "fare", "total", "amount"] },
+  { k: "dist", label: "Distance", names: ["distancemiles", "distancemi", "tripdistancemiles", "tripdistance", "distancekm", "distancekilometers", "distance"] },
+  { k: "end", label: "Drop-off time", names: ["dropofftime", "dropofftimestamp", "droptime", "tripendtime", "endtime", "completedtime", "completiontime"] },
+  { k: "dur", label: "Trip duration", names: ["durationminutes", "tripdurationminutes", "tripduration", "durationseconds", "duration"] },
+  { k: "status", label: "Trip status", names: ["tripororderstatus", "tripstatus", "orderstatus", "status"] },
+  { k: "place", label: "Restaurant or pickup address", names: ["restaurantname", "restaurant", "storename", "merchantname", "merchant", "begintripaddress", "pickupaddress", "restaurantaddress"] },
+];
+const normHead = (h) => String(h).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function parseCSV(text, maxRows = Infinity) {
+  const rows = []; let row = [], field = "", q = false;
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  for (let i = 0; i < text.length && rows.length < maxRows; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.length > 1 || row[0] !== "") rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function detectColumns(header) {
+  const hs = header.map(normHead), map = {}, used = new Set();
+  const pick = (test) => hs.findIndex((h, j) => !used.has(j) && test(h));
+  for (const f of IMPORT_FIELDS) {
+    let idx = -1;
+    for (const n of f.names) { idx = pick((h) => h === n); if (idx >= 0) break; }
+    // Looser match ("Begin Trip Lat (deg)"), only for longer names so "lat" can't match "platform".
+    if (idx < 0) for (const n of f.names) { if (n.length < 8) continue; idx = pick((h) => h.includes(n)); if (idx >= 0) break; }
+    map[f.k] = idx;
+    if (idx >= 0) used.add(idx);
+  }
+  return map;
+}
+
+// Handles "2024-05-03 18:20:11 +0000 UTC", ISO strings, and US dates like "5/3/2024 6:20 PM".
+function parseWhen(v) {
+  v = String(v || "").trim();
+  if (!v) return NaN;
+  let m = v.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|UTC|[+-]\d{2}:?\d{2})?/i);
+  if (m) {
+    const [, y, mo, d, h, mi, se] = m;
+    const tz = (m[7] || "").toUpperCase();
+    if (!tz) return new Date(+y, mo - 1, +d, +h, +mi, +(se || 0)).getTime();
+    let t = Date.UTC(+y, mo - 1, +d, +h, +mi, +(se || 0));
+    if (tz !== "Z" && tz !== "UTC") { const sign = tz[0] === "-" ? -1 : 1, hh = +tz.slice(1, 3), mm = +tz.slice(-2); t -= sign * (hh * 60 + mm) * 60000; }
+    return t;
+  }
+  m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?)?/i);
+  if (m) {
+    let h = +(m[4] || 0); const ap = (m[7] || "").toUpperCase();
+    if (ap === "PM" && h < 12) h += 12; if (ap === "AM" && h === 12) h = 0;
+    const y = +m[3] < 100 ? 2000 + +m[3] : +m[3];
+    return new Date(y, m[1] - 1, +m[2], h, +(m[5] || 0), +(m[6] || 0)).getTime();
+  }
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : NaN;
+}
+const money = (v) => { const x = parseFloat(String(v || "").replace(/[^0-9.\-]/g, "")); return Number.isFinite(x) ? x : NaN; };
+function durationMinutes(v, header) {
+  v = String(v || "").trim();
+  const hms = v.match(/^(\d+):(\d{2})(?::(\d{2}))?$/);
+  if (hms) return hms[3] !== undefined ? +hms[1] * 60 + +hms[2] + hms[3] / 60 : +hms[1] + hms[2] / 60;
+  const x = money(v);
+  if (!Number.isFinite(x)) return NaN;
+  return /sec/.test(header) ? x / 60 : /hour|hrs/.test(header) ? x * 60 : x;
+}
+
+function rowsToTrips(file, map) {
+  const [header, ...rows] = file.rows, H = header.map(normHead);
+  const get = (r, k) => (map[k] >= 0 ? r[map[k]] : undefined);
+  const trips = [];
+  for (const r of rows) {
+    const status = String(get(r, "status") || "");
+    if (/cancel|fail|unfulfil|declin|reject|expire/i.test(status)) continue;
+    const t = parseWhen(get(r, "time")), lat = parseFloat(get(r, "lat")), lng = parseFloat(get(r, "lng")), pay = money(get(r, "pay"));
+    if (!Number.isFinite(t) || !Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0) || Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    if (!Number.isFinite(pay) || pay <= 0) continue;
+    let dist = money(get(r, "dist"));
+    if (Number.isFinite(dist) && map.dist >= 0 && /km|kilomet/.test(H[map.dist])) dist *= 0.621371;
+    if (!Number.isFinite(dist) || dist <= 0) dist = 3;
+    let tripMin = NaN;
+    const end = parseWhen(get(r, "end"));
+    if (Number.isFinite(end) && end > t) tripMin = (end - t) / 60000;
+    if (!(tripMin >= 1 && tripMin <= 180) && map.dur >= 0) tripMin = durationMinutes(get(r, "dur"), H[map.dur]);
+    if (!(tripMin >= 1 && tripMin <= 180)) tripMin = dist * 3.2;
+    let place = String(get(r, "place") || "").trim();
+    if (map.place >= 0 && /address/.test(H[map.place])) place = place.split(",")[0].trim();
+    trips.push({ id: `uber${t}_${Math.round(pay * 100)}`, t, payout: +pay.toFixed(2), pu: 1, do: +dist.toFixed(1),
+                 // ~8 min to reach the restaurant and pick up, since the export starts at pickup.
+                 min: Math.round(tripMin + 8), wait: 0, orders: 1, restaurant: place.slice(0, 60), took: true,
+                 lat: +lat.toFixed(5), lng: +lng.toFixed(5), imported: true, tripMin });
+  }
+  return trips;
+}
+
+let importState = null;
+$("#importFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    let files = [];
+    if (/\.zip$/i.test(file.name) || /zip/.test(file.type)) {
+      if (!window.JSZip) { toast("Opening a .zip needs an internet connection. Or unzip it in the Files app and pick the .csv inside."); return; }
+      const zip = await JSZip.loadAsync(file);
+      for (const entry of Object.values(zip.files)) if (!entry.dir && /\.csv$/i.test(entry.name)) files.push({ name: entry.name, text: await entry.async("string") });
+    } else files.push({ name: file.name, text: await file.text() });
+    files = files.map((f) => {
+      const header = parseCSV(f.text, 1)[0] || [];
+      const map = detectColumns(header);
+      const found = IMPORT_FIELDS.filter((x) => x.req && map[x.k] >= 0).length;
+      return { ...f, header, map, found };
+    }).filter((f) => f.header.length > 1);
+    if (!files.length) { toast("No spreadsheet (.csv) files found in that file."); return; }
+    files.sort((a, b) => b.found - a.found || /trip|deliver|order/i.test(b.name) - /trip|deliver|order/i.test(a.name));
+    importState = { files, which: 0 };
+    $("#importWhich").innerHTML = files.map((f, i) => `<option value="${i}">${esc(f.name.split("/").pop())} (${f.found}/4 required columns found)</option>`).join("");
+    $("#importFileRow").hidden = files.length < 2;
+    $("#importBox").hidden = false;
+    showImportFile(0);
+    $("#importBox").scrollIntoView({ block: "start", behavior: "smooth" });
+  } catch (err) {
+    toast("Couldn't read that file. Pick the .zip Uber emailed you, or a .csv from inside it.");
+  }
+});
+
+function showImportFile(i) {
+  const f = importState.files[i];
+  importState.which = i;
+  if (!f.rows) f.rows = parseCSV(f.text);
+  $("#importMap").innerHTML = IMPORT_FIELDS.map((x) => `<label class="field"><span class="label">${x.label}</span>
+    <select data-k="${x.k}"><option value="-1">Not in file</option>${f.header.map((h, j) => `<option value="${j}"${f.map[x.k] === j ? " selected" : ""}>${esc(h)}</option>`).join("")}</select></label>`).join("");
+  previewImport();
+}
+function previewImport() {
+  const f = importState.files[importState.which];
+  const missing = IMPORT_FIELDS.filter((x) => x.req && !(f.map[x.k] >= 0));
+  if (missing.length) {
+    $("#importPreview").textContent = `Pick a column for: ${missing.map((x) => x.label.replace(" *", "")).join(", ")}.`;
+    $("#importGo").disabled = true; return;
+  }
+  const trips = rowsToTrips(f, f.map), have = new Set(offers.map((o) => o.id));
+  const fresh = trips.filter((t) => !have.has(t.id));
+  importState.trips = fresh;
+  if (!trips.length) { $("#importPreview").textContent = "No completed trips with a location and pay were found with these columns."; $("#importGo").disabled = true; return; }
+  const ts = trips.map((t) => t.t), fmt = (t) => new Date(t).toLocaleDateString([], { month: "short", year: "numeric" });
+  $("#importPreview").textContent = `${trips.length} completed trips, ${fmt(Math.min(...ts))} to ${fmt(Math.max(...ts))}.` +
+    (fresh.length < trips.length ? ` ${trips.length - fresh.length} are already imported.` : "");
+  $("#importGo").disabled = !fresh.length;
+  $("#importGo").textContent = fresh.length ? `Import ${fresh.length} trips` : "Nothing new to import";
+}
+$("#importWhich").addEventListener("change", (e) => showImportFile(+e.target.value));
+$("#importMap").addEventListener("change", (e) => {
+  const sel = e.target.closest("select[data-k]"); if (!sel) return;
+  importState.files[importState.which].map[sel.dataset.k] = +sel.value;
+  previewImport();
+});
+$("#importCancel").addEventListener("click", () => { importState = null; $("#importBox").hidden = true; });
+$("#importGo").addEventListener("click", () => {
+  const trips = importState && importState.trips;
+  if (!trips || !trips.length) return;
+  for (const t of trips) {
+    // Count the trip plus ~18 min (pickup and waiting for the next order) as time spent in that spot,
+    // so Spots can compare places by good orders per hour, the same way it does for tracked time.
+    const d = new Date(t.t), k = `${cellKey(t.lat, t.lng)}|${d.getDay()}|${d.getHours()}`;
+    importPresence[k] = (importPresence[k] || 0) + t.tripMin + 18;
+    delete t.tripMin;
+    offers.push(t);
+  }
+  offers.sort((a, b) => a.t - b.t);
+  saveAll();
+  importState = null; $("#importBox").hidden = true;
+  renderAll();
+  toast(`Imported ${trips.length} trips. Open Spots to see where they came from.`);
+});
+armConfirm($("#unimportBtn"), "Remove imported trips", () => {
+  const n = offers.filter((o) => o.imported).length;
+  offers = offers.filter((o) => !o.imported); importPresence = {};
+  saveAll(); renderAll(); toast(`Removed ${n} imported trips`);
+});
+
 // ---------- tabs, toast, boot ----------
 function showTab(name) {
   $$("nav button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
@@ -753,6 +1018,7 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", 
 function renderAll() { renderStatus(); renderVerdict(); renderRestaurants(); renderHistory(); renderSettings(); if (!$("#tab-where").hidden) renderWhere(); }
 
 initWhen();
+applyMode(store.get("quick", true));
 renderAll();
 let startTab = "offer"; try { startTab = sessionStorage.getItem("ds.tab") || "offer"; } catch {}
 showTab(startTab);

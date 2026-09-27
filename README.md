@@ -20,6 +20,13 @@ A one-page web app for use while you drive, with the same scoring as the Python 
   offers came in most often per hour you spent there. Tap *Go* to open directions in Google Maps.
   Offers from similar hours and days count partly, and squares with under ~2 hours of data are
   pulled toward your average, so one lucky offer doesn't put a spot on top.
+- **Quick mode** (the default): enter just the payout and total miles from the offer card; minutes
+  are optional. It assumes about a quarter of the miles are the drive to the restaurant, and it
+  estimates the trip time from offers you entered in Full mode (about 3.2 min a mile until you have 5).
+- **Import from Uber** (Settings): request your data at privacy.uber.com, then pick the .zip Uber
+  emails you (or a .csv from inside it). The page matches the columns by name and lets you fix any it
+  gets wrong. Completed trips become logged offers at their pickup spot, so Spots works from day one.
+  Declined offers aren't in Uber's export, so keep logging those by hand.
 - **History:** today's earnings, online time and net $/hr. *Export CSV* saves a file that
   `python -m ubereats insights` can read (it adds a "Best spots" list).
 

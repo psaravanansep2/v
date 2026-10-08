@@ -213,6 +213,16 @@ They handle everyday tasks well, but long multi-step jobs and complicated
 screen work go wrong more often. Screen control reads text, so it can't
 click icons that have no label.
 
+## Make the free model better at v's jobs
+
+Open models can be trained further. [`training/`](training/) teaches Qwen3
+4B (the model v uses on 8 GB laptops) v's tools with a small add-on, scores
+it before and after with `v eval`, and makes a file v runs:
+`v --local-model v-qwen3-4b-Q4_K_M.gguf`. Training needs a GPU; a free
+Google Colab or Kaggle one works, with the [notebook](training/v_finetune.ipynb)
+(about 1.5 to 2 hours). Share the file on Hugging Face and anyone can use it
+with `v --local-model hf:<you>/<repo>/<file>.gguf`.
+
 ## Optional: Claude
 
 If you have an Anthropic API key, `v --brain claude` uses Claude Opus 5.5

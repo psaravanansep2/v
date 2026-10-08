@@ -1,0 +1,12 @@
+# For training (finetune.py, serve_hf.py) and making the GGUF (export_gguf.py).
+# PyTorch isn't listed: Colab and Kaggle have it; elsewhere install the build for your computer first.
+transformers>=4.51
+peft>=0.14
+accelerate>=0.34
+safetensors
+# what llama.cpp's converter needs
+sentencepiece
+protobuf
+pyyaml
+tqdm
+mistral-common

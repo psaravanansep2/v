@@ -48,6 +48,45 @@ jobs:
         env:
           V_NETWORK_TESTS: "1"
 
+  training:
+    name: training pipeline end to end (tiny model, CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install -e ".[free,local,dev]" -r training/requirements.txt
+      - name: Make training examples
+        run: python training/make_data.py --families read,find,write --per-family 2 --out data/train.jsonl
+      - name: Train Qwen3 0.6B for a few passes over them
+        run: python training/finetune.py --base Qwen/Qwen3-0.6B --data data/train.jsonl --out run --max-steps 18 --grad-accum 1 --lr 1e-3 --cpu
+      - name: It learned (average loss, first pass vs last)
+        run: |
+          python - <<'PY'
+          import json
+          losses = json.load(open("run/metrics.json"))["losses"]
+          first, last = sum(losses[:6]) / 6, sum(losses[-6:]) / 6
+          print(f"{first:.3f} -> {last:.3f}")
+          assert last < first * 0.9, losses
+          PY
+      - name: Score it with v eval through the training server
+        run: |
+          python training/serve_hf.py --model run/merged --port 8000 --max-new-tokens 200 > serve.log 2>&1 &
+          for i in $(seq 150); do curl -sf http://127.0.0.1:8000/v1/models && break; sleep 2; done
+          v eval --local-url http://127.0.0.1:8000 --families question,read --json tiny-hf.json
+      - name: Make a GGUF and run it in v
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python training/export_gguf.py --model run/merged --out tiny-Q4_K_M.gguf
+          v eval --local-model ./tiny-Q4_K_M.gguf --families question,read --json tiny-gguf.json
+      - name: Server log
+        if: failure()
+        run: tail -60 serve.log || true
+
   installer:
     name: installer (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

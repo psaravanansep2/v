@@ -194,3 +194,54 @@ def test_ollama_downloads_a_smaller_model_when_the_disk_is_full(monkeypatch):
     monkeypatch.setattr(local, "free_disk_gb", lambda path: 2.0)
     with pytest.raises(local.NotEnoughDisk):
         local._fit_disk(model("Qwen3 4B"), local.ollama_models_dir(), logs.append)
+
+
+def test_your_own_model_file(tmp_path):
+    gguf = tmp_path / "v-qwen3-4b-Q4_K_M.gguf"
+    gguf.write_bytes(b"x" * 1000)
+    choice = local.gguf_choice(gguf)
+    assert choice.name == "v-qwen3-4b-Q4_K_M" and choice.ollama == "v-qwen3-4b-q4-k-m"
+    assert choice.system_suffix == "/no_think"  # a Qwen3 model: same switches as v's Qwen3
+    parts = [tmp_path / f"big-gpt-oss-120b-0000{i}-of-00002.gguf" for i in (1, 2)]
+    for part in parts:
+        part.write_bytes(b"x" * 500)
+    split = local.gguf_choice(parts[0])
+    assert split.name == "big-gpt-oss-120b" and split.system_suffix == "Reasoning: low"
+    assert abs(split.download_gb - 1000 / 1e9) < 1e-12  # both parts counted
+
+
+def test_runs_a_model_file_and_swaps_out_another_running_model(runner, tmp_path, monkeypatch):
+    gguf = tmp_path / "my-model.gguf"
+    gguf.write_bytes(b"x")
+    serving = {"model": "qwen3-4b"}
+    monkeypatch.setattr(local, "_first_model", lambda base: serving["model"])
+    stopped = []
+
+    def stop():
+        stopped.append(True)
+        serving["model"] = None
+        return True
+
+    monkeypatch.setattr(local, "stop_own_server", stop)
+    server = local.ensure_server(lambda line: None, model=str(gguf))
+    assert stopped and runner["cmd"][runner["cmd"].index("-m") + 1] == str(gguf.resolve())
+    assert server.model == "my-model"
+    # the same model already loaded: used as it is
+    runner["cmd"], serving["model"] = None, "my-model"
+    assert local.ensure_server(lambda line: None, model=str(gguf)).model == "my-model" and runner["cmd"] is None
+    with pytest.raises(local.LocalError, match="no model file"):
+        local.ensure_server(lambda line: None, model=str(tmp_path / "missing.gguf"))
+
+
+def test_model_files_on_hugging_face(runner, tmp_path, monkeypatch):
+    got = []
+    monkeypatch.setattr(local, "download_with_progress",
+                        lambda url, dest, log, size=None: (got.append(url), dest.parent.mkdir(parents=True, exist_ok=True),
+                                                           dest.write_bytes(b"x")))
+    path = local.fetch_hf_gguf("hf:sam/v-qwen3-4b-GGUF/v-qwen3-4b-Q4_K_M.gguf", lambda line: None)
+    assert got == ["https://huggingface.co/sam/v-qwen3-4b-GGUF/resolve/main/v-qwen3-4b-Q4_K_M.gguf"]
+    assert path == tmp_path / "models" / "v-qwen3-4b-Q4_K_M.gguf"
+    local.fetch_hf_gguf("hf:sam/v-qwen3-4b-GGUF/v-qwen3-4b-Q4_K_M.gguf", lambda line: None)
+    assert len(got) == 1  # downloaded once
+    with pytest.raises(local.LocalError, match="hf:owner/repo/file.gguf"):
+        local.fetch_hf_gguf("hf:just-a-name", lambda line: None)

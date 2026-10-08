@@ -692,6 +692,7 @@ class Result:
     prompt_tokens: int
     messages: list  # the conversation as the model saw it (system prompt first), for training data
     tools: list
+    project: str = ""  # the scratch folder the task ran in
 
 
 def run_task(task: Task, client, workdir: Optional[Path] = None) -> Result:
@@ -720,8 +721,9 @@ def run_task(task: Task, client, workdir: Optional[Path] = None) -> Result:
                 return task.web[url], "text/html"
             raise OSError(f"couldn't reach {url}")
 
-        app = task.app() if task.app else None
-        screen = Screen(app, ocr=app.ocr) if app else None
+        # a screen is always there, as in v by default, so the model sees the same tools it really gets
+        app = task.app() if task.app else FakeApp([{"name": "clock", "kind": "label", "text": "9:41 AM", "x": 1860, "y": 1060}])
+        screen = Screen(app, ocr=app.ocr)
         toolbox = Toolbox(cfg, Confirmer("risky", ask), _Quiet(), screen, opener=opened.append, fetch=fetch)
         agent = LocalAgent(client, cfg, lambda text: None, toolbox, ui=_Quiet())
         tokens0, started = getattr(client, "prompt_tokens", 0), time.time()
@@ -746,7 +748,7 @@ def run_task(task: Task, client, workdir: Optional[Path] = None) -> Result:
         system = system_prompt(cfg, screen is not None, client.server.system_suffix)
         return Result(task.family, task.prompt, reason is None, reason or "", spoken_style(answer), seconds, len(calls),
                       getattr(client, "prompt_tokens", 0) - tokens0, [{"role": "system", "content": system}] + agent.history,
-                      toolbox.definitions())
+                      toolbox.definitions(), str(project))
     finally:
         if own:
             shutil.rmtree(workdir, ignore_errors=True)

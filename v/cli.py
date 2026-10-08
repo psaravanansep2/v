@@ -53,7 +53,8 @@ def _add_options(p: argparse.ArgumentParser, top: bool) -> None:
     opt("--brain", choices=["local", "claude"], default="local",
         help="local = free open model on this computer (default); claude = Anthropic API (paid)")
     opt("--local-url", help="use this OpenAI-compatible model server, e.g. http://127.0.0.1:1234")
-    opt("--local-model", help="model name on the local server (e.g. qwen3:8b for Ollama)")
+    opt("--local-model", help="a model (e.g. qwen3:8b), a model file of your own (path/to/model.gguf), "
+        "or one on Hugging Face (hf:owner/repo/file.gguf)")
     opt("--model", default=DEFAULT_MODEL, help="Claude model, with --brain claude")
     opt("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
         help="Claude effort level, with --brain claude")

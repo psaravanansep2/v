@@ -696,16 +696,8 @@ def _start_llama_server(choice: ModelChoice, log) -> LocalServer:
             "Or install v's own model runner with: pip install 'v[local]'"
         ) from None
 
-    bin_dir, model_dir = STATE_DIR / "bin", STATE_DIR / "models"
-    binaries = list(bin_dir.rglob("llama-server.exe" if sys.platform.startswith("win") else "llama-server"))
-    if binaries:
-        binary = binaries[0]
-    else:
-        log("Fetching llama.cpp (one time)…")
-        asset = pick_llama_download(_recent_llama_releases(), prefer_vulkan=gpu_memory_gb() > 0)
-        log(f"  {asset['name']}")
-        binary = release.download_and_extract(asset, bin_dir)
-
+    binary = _llama_binary(release, log)
+    model_dir = STATE_DIR / "models"
     model_path = None
     errors = []
     for repo in choice.hf_repos:
@@ -727,8 +719,30 @@ def _start_llama_server(choice: ModelChoice, log) -> LocalServer:
         break
     if model_path is None:
         raise LocalError(f"couldn't find a download for {choice.name}: " + "; ".join(errors))
+    return _launch_llama(binary, model_path, choice, log)
 
+
+def _llama_binary(release, log) -> Path:
+    bin_dir = STATE_DIR / "bin"
+    binaries = list(bin_dir.rglob("llama-server.exe" if sys.platform.startswith("win") else "llama-server"))
+    if binaries:
+        return binaries[0]
+    log("Fetching llama.cpp (one time)…")
+    asset = pick_llama_download(_recent_llama_releases(), prefer_vulkan=gpu_memory_gb() > 0)
+    log(f"  {asset['name']}")
+    return release.download_and_extract(asset, bin_dir)
+
+
+def _launch_llama(binary: Path, model_path: Path, choice: ModelChoice, log) -> LocalServer:
     alias = choice.ollama.replace(":", "-")
+    running = _first_model(f"http://127.0.0.1:{V_SERVER_PORT}")
+    if running == alias:
+        return LocalServer(f"http://127.0.0.1:{V_SERVER_PORT}/v1", alias, "llama.cpp", choice)
+    if running and stop_own_server():  # v's runner has another model loaded: swap it
+        for _ in range(40):
+            if _first_model(f"http://127.0.0.1:{V_SERVER_PORT}") is None:
+                break
+            time.sleep(0.25)
     cmd = [
         str(binary),
         "-m", str(model_path),
@@ -758,10 +772,54 @@ def _start_llama_server(choice: ModelChoice, log) -> LocalServer:
     raise LocalError(f"{choice.name} didn't finish loading in {minutes} minutes")
 
 
+def gguf_choice(path: Path) -> ModelChoice:
+    """A model file of your own, such as one you fine-tuned."""
+    files = [path] + sorted(path.parent.glob(_PART.sub("", path.name) + "-*-of-*.gguf"))[1:] if _PART.search(path.name) else [path]
+    stem = _PART.sub("", path.name)
+    stem = stem[: -len(".gguf")] if stem.lower().endswith(".gguf") else stem
+    known = next((m for m in MODELS if m.ollama.split(":")[0] in stem.lower() and m.ollama.split(":")[1] in _tokens(stem)), None)
+    family_suffix = {"qwen3": "/no_think", "gpt-oss": "Reasoning: low"}
+    suffix = known.system_suffix if known else next((v for k, v in family_suffix.items() if k in stem.lower()), "")
+    size = sum(f.stat().st_size for f in files if f.exists()) / 1e9
+    return ModelChoice(stem, re.sub(r"[^a-z0-9.]+", "-", stem.lower()).strip("-"), (), "", size, size * 1.15 + 1, suffix)
+
+
+def fetch_hf_gguf(ref: str, log) -> Path:
+    """hf:owner/repo/path/file.gguf → the file, downloaded once (with every part of a split model)."""
+    owner, repo, path = (ref[len("hf:"):].split("/", 2) + ["", ""])[:3]
+    if not (owner and repo and path.lower().endswith(".gguf")):
+        raise LocalError(f"use hf:owner/repo/file.gguf, not {ref}")
+    repo_id, model_dir = f"{owner}/{repo}", STATE_DIR / "models"
+    parts = [path]
+    if _PART.search(path):
+        prefix = path[: _PART.search(path).start()]
+        parts = sorted(f["path"] for f in _hf_tree(repo_id) if f.get("path", "").startswith(prefix) and _PART.search(f["path"]))
+    for part in parts:
+        dest = model_dir / part.rsplit("/", 1)[-1]
+        if not dest.exists():
+            log(f"Downloading {part.rsplit('/', 1)[-1]} (one time)…")
+            download_with_progress(HF_FILE.format(repo=repo_id, path=part), dest, log)
+    return model_dir / parts[0].rsplit("/", 1)[-1]
+
+
+def start_gguf_server(path: Path, log) -> LocalServer:
+    try:
+        from cheapstack import release
+    except ImportError:
+        raise LocalError("Running a model file needs v's model runner: pip install 'v[local]'") from None
+    choice = gguf_choice(path)
+    return _launch_llama(_llama_binary(release, log), path, choice, log)
+
+
 def ensure_server(log: Callable[[str], None] = print, url: Optional[str] = None, model: Optional[str] = None) -> LocalServer:
     """A ready-to-use local model server, setting one up if needed."""
     if url:
         return custom_server(url, model)
+    if model and (model.lower().endswith(".gguf") or model.startswith("hf:")):
+        path = fetch_hf_gguf(model, log) if model.startswith("hf:") else Path(model).expanduser().resolve()
+        if not path.is_file():
+            raise LocalError(f"there's no model file at {path}")
+        return start_gguf_server(path, log)
     if model is None:
         running = find_running(log)
         if running:

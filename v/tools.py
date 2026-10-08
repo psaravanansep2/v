@@ -1,0 +1,501 @@
+"""Everyday tools for the free brain.
+
+Files, apps, websites, web search, the clipboard, shell commands and the
+screen. Every tool is free and runs on this computer; web search and page
+reading are the only ones that touch the internet.
+
+Screen control works without a vision model: the screen is read with
+on-device OCR (RapidOCR), and the model clicks things by the number shown
+next to each piece of text. That keeps it usable by small open models.
+"""
+
+from __future__ import annotations
+
+import base64
+import html
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Callable, Optional
+
+from .config import Config, save_goal
+from .confirm import COMMAND, COMPUTER, Confirmer
+from .shell import run_command
+
+MAX_RESULT = 8_000
+MAX_LISTING = 200
+USER_AGENT = "Mozilla/5.0 (compatible; v-assistant/0.1)"
+WRITE = "write"  # confirmation kind for file changes outside the project
+
+
+def _fn(name: str, description: str, properties: dict, required: list[str]) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {"type": "object", "properties": properties, "required": required},
+        },
+    }
+
+
+def _clip(text: str, limit: int = MAX_RESULT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n[...cut {len(text) - limit} more characters]"
+
+
+# --- web helpers --------------------------------------------------------------
+
+
+class _TextExtractor(HTMLParser):
+    SKIP = {"script", "style", "noscript", "svg", "head", "nav", "footer", "form"}
+    BLOCK = {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "section", "article", "pre"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts: list[str] = []
+        self.skip = 0
+        self.title = ""
+        self._in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self.skip += 1
+        if tag == "title":
+            self._in_title = True
+        if tag in self.BLOCK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP and self.skip:
+            self.skip -= 1
+        if tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+        elif not self.skip:
+            self.parts.append(data)
+
+    def text(self) -> str:
+        raw = "".join(self.parts)
+        lines = [re.sub(r"[ \t\r\f\v]+", " ", line).strip() for line in raw.split("\n")]
+        return "\n".join(line for line in lines if line)
+
+
+def html_to_text(page: str) -> tuple[str, str]:
+    parser = _TextExtractor()
+    parser.feed(page)
+    return parser.title.strip(), parser.text()
+
+
+class _DuckResults(HTMLParser):
+    """Parses DuckDuckGo's no-JavaScript results page."""
+
+    def __init__(self):
+        super().__init__()
+        self.results: list[dict] = []
+        self._field: Optional[str] = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        classes = (a.get("class") or "").split()
+        if tag == "a" and "result__a" in classes:
+            self.results.append({"title": "", "url": _real_url(a.get("href", "")), "snippet": ""})
+            self._field = "title"
+        elif "result__snippet" in classes and self.results:
+            self._field = "snippet"
+
+    def handle_endtag(self, tag):
+        if tag in ("a", "div", "td"):
+            self._field = None
+
+    def handle_data(self, data):
+        if self._field and self.results:
+            self.results[-1][self._field] += data
+
+
+def _real_url(href: str) -> str:
+    """DuckDuckGo wraps result links in a redirect: //duckduckgo.com/l/?uddg=<url>."""
+    href = html.unescape(href)
+    parsed = urllib.parse.urlparse(href if "://" in href else "https:" + href if href.startswith("//") else href)
+    if parsed.path.startswith("/l/"):
+        target = urllib.parse.parse_qs(parsed.query).get("uddg")
+        if target:
+            return target[0]
+    return href
+
+
+def parse_search_results(page: str, limit: int = 6) -> list[dict]:
+    parser = _DuckResults()
+    parser.feed(page)
+    out = []
+    for r in parser.results:
+        title = re.sub(r"\s+", " ", r["title"]).strip()
+        if title and r["url"].startswith("http"):
+            out.append({"title": title, "url": r["url"], "snippet": re.sub(r"\s+", " ", r["snippet"]).strip()})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _http_get(url: str, timeout: int = 20, max_bytes: int = 3_000_000) -> tuple[str, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = resp.read(max_bytes)
+        ctype = resp.headers.get("Content-Type", "")
+        charset = resp.headers.get_content_charset() or "utf-8"
+    return data.decode(charset, errors="replace"), ctype
+
+
+# --- screen ---------------------------------------------------------------------
+
+
+class Screen:
+    """Reads the screen with OCR and clicks/types through pyautogui."""
+
+    def __init__(self, computer, ocr=None):
+        self.computer = computer  # v.computer.Computer: gui + grab + logical size
+        self._ocr = ocr
+        self.elements: list[dict] = []
+
+    def _engine(self):
+        if self._ocr is None:
+            from rapidocr_onnxruntime import RapidOCR
+
+            self._ocr = RapidOCR()
+        return self._ocr
+
+    def look(self) -> tuple[str, str]:
+        """Returns (description for the model, PNG base64 for the phone preview)."""
+        import numpy as np
+
+        image = self.computer.grab()
+        ratio = image.width / self.computer.width  # physical pixels per screen point (2 on Retina)
+        result, _ = self._engine()(np.array(image))
+        elements = []
+        for box, text, score in result or []:
+            if float(score) < 0.5 or not text.strip():
+                continue
+            xs, ys = [p[0] for p in box], [p[1] for p in box]
+            elements.append({"text": text.strip(), "x": round(sum(xs) / 4 / ratio), "y": round(sum(ys) / 4 / ratio)})
+        # reading order: rows of ~12 points, then left to right
+        elements.sort(key=lambda e: (round(e["y"] / 12), e["x"]))
+        self.elements = elements[:150]
+        lines = [f"Screen is {self.computer.width}x{self.computer.height}. Text on screen (number: text @ x,y):"]
+        lines += [f"{i}: {e['text']} @ {e['x']},{e['y']}" for i, e in enumerate(self.elements, 1)]
+        if not self.elements:
+            lines.append("(no readable text found)")
+        preview = image.copy()
+        preview.thumbnail((1280, 1280))
+        buf = io.BytesIO()
+        preview.save(buf, format="PNG", optimize=True)
+        return "\n".join(lines), base64.standard_b64encode(buf.getvalue()).decode()
+
+    def point(self, element: Optional[int], x: Optional[int], y: Optional[int]) -> tuple[int, int]:
+        if element is not None:
+            if not 1 <= element <= len(self.elements):
+                raise ValueError(f"there is no element {element}; call look_at_screen first")
+            e = self.elements[element - 1]
+            return e["x"], e["y"]
+        if x is None or y is None:
+            raise ValueError("give an element number, or both x and y")
+        return (min(max(int(x), 0), self.computer.width - 1), min(max(int(y), 0), self.computer.height - 1))
+
+    def click(self, element=None, x=None, y=None, button="left", double=False) -> str:
+        px, py = self.point(element, x, y)
+        self.computer.gui.click(x=px, y=py, clicks=2 if double else 1, interval=0.05, button=button)
+        return f"Clicked at {px},{py}. Call look_at_screen to see the result."
+
+    def type_text(self, text: str) -> str:
+        self.computer._type(text)
+        return "Typed."
+
+    def press_keys(self, keys: str) -> str:
+        from .computer import to_keys
+
+        names = to_keys(keys, self.computer.platform)
+        if len(names) == 1:
+            self.computer.gui.press(names[0])
+        else:
+            self.computer.gui.hotkey(*names)
+        return f"Pressed {keys}."
+
+    def scroll(self, direction: str, amount: int = 5) -> str:
+        clicks = max(1, min(int(amount), 50))
+        self.computer.gui.scroll(clicks if direction == "up" else -clicks)
+        return f"Scrolled {direction}."
+
+
+# --- the toolbox ------------------------------------------------------------------
+
+
+def open_with_system(target: str) -> None:
+    if sys.platform == "darwin":
+        is_app = not (target.startswith(("http://", "https://", "/", "~")) or os.path.exists(os.path.expanduser(target)))
+        cmd = ["open", "-a", target] if is_app else ["open", os.path.expanduser(target)]
+    elif sys.platform.startswith("win"):
+        os.startfile(os.path.expanduser(target))  # type: ignore[attr-defined]
+        return
+    else:
+        cmd = ["xdg-open", os.path.expanduser(target)]
+        if not (target.startswith(("http://", "https://")) or os.path.exists(os.path.expanduser(target))):
+            exe = subprocess.run(["which", target.lower()], capture_output=True, text=True).stdout.strip()
+            if exe:
+                cmd = [exe]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+class Toolbox:
+    def __init__(self, cfg: Config, confirmer: Confirmer, ui, screen: Optional[Screen] = None,
+                 opener: Callable[[str], None] = open_with_system, fetch=_http_get):
+        self.cfg = cfg
+        self.confirmer = confirmer
+        self.ui = ui
+        self.screen = screen
+        self.opener = opener
+        self.fetch = fetch
+
+    # --- definitions ---
+
+    def definitions(self) -> list[dict]:
+        path = {"type": "string", "description": "File or folder path. Relative paths are inside the project folder; ~ is the home folder."}
+        tools = [
+            _fn("run_command", "Run a shell command in the project folder and get its output.",
+                {"command": {"type": "string"}}, ["command"]),
+            _fn("list_files", "List a folder, or find files whose names match a pattern (like *.pdf) in it and its subfolders.",
+                {"path": path, "pattern": {"type": "string", "description": "Optional glob pattern, e.g. *.pdf or report*"}}, []),
+            _fn("read_file", "Read a text file.", {"path": path}, ["path"]),
+            _fn("write_file", "Create or overwrite a text file.", {"path": path, "content": {"type": "string"}}, ["path", "content"]),
+            _fn("edit_file", "Replace one exact piece of text in a file with new text.",
+                {"path": path, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, ["path", "old_text", "new_text"]),
+            _fn("open", "Open an app (by name), a file, a folder, or a web address with the computer's default program.",
+                {"target": {"type": "string", "description": "e.g. Spotify, ~/Downloads, https://example.com"}}, ["target"]),
+            _fn("web_search", "Search the web and get the top results (title, address, snippet).",
+                {"query": {"type": "string"}}, ["query"]),
+            _fn("read_webpage", "Get the readable text of a web page.", {"url": {"type": "string"}}, ["url"]),
+            _fn("clipboard", "Read the clipboard, or put text on it.",
+                {"action": {"type": "string", "enum": ["read", "write"]}, "text": {"type": "string"}}, ["action"]),
+            _fn("set_project_goal", "Save the user's overall goal for this project; it's remembered next time.",
+                {"goal": {"type": "string"}}, ["goal"]),
+        ]
+        if self.screen is not None:
+            tools += [
+                _fn("look_at_screen", "Read what's on the computer screen: every piece of visible text, numbered, with its position.", {}, []),
+                _fn("click", "Click something on screen: by its number from look_at_screen, or at x,y.",
+                    {"element": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"},
+                     "button": {"type": "string", "enum": ["left", "right"]}, "double": {"type": "boolean"}}, []),
+                _fn("type_text", "Type text into whatever is focused on screen.", {"text": {"type": "string"}}, ["text"]),
+                _fn("press_keys", "Press a key or shortcut, e.g. Return, Escape, ctrl+s, cmd+space, alt+Tab.",
+                    {"keys": {"type": "string"}}, ["keys"]),
+                _fn("scroll", "Scroll the screen up or down.",
+                    {"direction": {"type": "string", "enum": ["up", "down"]}, "amount": {"type": "integer"}}, ["direction"]),
+            ]
+        return tools
+
+    # --- helpers ---
+
+    def _path(self, raw: str) -> Path:
+        p = Path(os.path.expanduser(raw or "."))
+        return (p if p.is_absolute() else self.cfg.project_dir / p).resolve()
+
+    def _inside_project(self, p: Path) -> bool:
+        try:
+            p.relative_to(self.cfg.project_dir.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _may_write(self, p: Path, verb: str) -> bool:
+        needs = self.confirmer.needs(COMPUTER) or (self.confirmer.needs(COMMAND) and not self._inside_project(p))
+        return not needs or self.confirmer.confirm(f"{verb} {p}?")
+
+    def _may_act_on_screen(self, what: str) -> bool:
+        return not self.confirmer.needs(COMPUTER) or self.confirmer.confirm(f"I'm about to {what}. Okay?")
+
+    # --- dispatch ---
+
+    def run(self, name: str, args: dict) -> str:
+        handler = getattr(self, f"t_{name}", None)
+        if handler is None or (self.screen is None and name in ("look_at_screen", "click", "type_text", "press_keys", "scroll")):
+            return f"Error: there is no tool named {name}."
+        try:
+            return _clip(handler(**args))
+        except TypeError as e:
+            return f"Error: wrong arguments for {name}: {e}"
+        except Exception as e:
+            return f"Error: {e.__class__.__name__}: {e}"
+
+    def t_run_command(self, command: str) -> str:
+        if self.confirmer.needs(COMMAND) and not self.confirmer.confirm(f"Run this command: {command}?"):
+            return "The user declined to run this command."
+        self.ui.activity(f"$ {command}")
+        out, _ = run_command(command, self.cfg.project_dir, self.cfg.command_timeout_s)
+        return out
+
+    def t_list_files(self, path: str = ".", pattern: Optional[str] = None) -> str:
+        root = self._path(path)
+        if not root.exists():
+            return f"Error: {root} doesn't exist."
+        if root.is_file():
+            return f"{root} is a file ({root.stat().st_size} bytes)."
+        if pattern:
+            matches = []
+            for p in root.rglob(pattern):
+                if any(part.startswith(".") for part in p.relative_to(root).parts):
+                    continue
+                matches.append(p)
+                if len(matches) >= MAX_LISTING:
+                    break
+            lines = [str(p.relative_to(root)) for p in sorted(matches)]
+            return f"{len(lines)} match(es) for {pattern} in {root}:\n" + "\n".join(lines) if lines else f"Nothing matches {pattern} in {root}."
+        entries = sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        lines = []
+        for p in entries[:MAX_LISTING]:
+            if p.name.startswith("."):
+                continue
+            lines.append(f"{p.name}/" if p.is_dir() else f"{p.name}  ({p.stat().st_size:,} bytes)")
+        more = f"\n…and {len(entries) - MAX_LISTING} more" if len(entries) > MAX_LISTING else ""
+        return f"{root}:\n" + ("\n".join(lines) or "(empty)") + more
+
+    def t_read_file(self, path: str) -> str:
+        p = self._path(path)
+        suffix = p.suffix.lower()
+        if suffix == ".pdf":
+            return read_pdf(p)
+        if suffix == ".docx":
+            return read_docx(p)
+        data = p.read_bytes()[:400_000]
+        if b"\x00" in data[:2000]:
+            return f"{p} isn't a text file ({p.stat().st_size:,} bytes)."
+        return data.decode("utf-8", errors="replace")
+
+    def t_write_file(self, path: str, content: str) -> str:
+        p = self._path(path)
+        if not self._may_write(p, "Write the file"):
+            return "The user declined this change."
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        self.ui.activity(f"wrote {p}")
+        return f"Wrote {len(content):,} characters to {p}."
+
+    def t_edit_file(self, path: str, old_text: str, new_text: str) -> str:
+        p = self._path(path)
+        text = p.read_text()
+        count = text.count(old_text)
+        if count == 0:
+            return "Error: old_text wasn't found in the file. Read the file and copy the text exactly."
+        if count > 1:
+            return f"Error: old_text appears {count} times; include more surrounding text so it's unique."
+        if not self._may_write(p, "Edit the file"):
+            return "The user declined this change."
+        p.write_text(text.replace(old_text, new_text, 1))
+        self.ui.activity(f"edited {p}")
+        return f"Edited {p}."
+
+    def t_open(self, target: str) -> str:
+        self.opener(target)
+        self.ui.activity(f"opened {target}")
+        return f"Opened {target}."
+
+    def t_web_search(self, query: str) -> str:
+        page, _ = self.fetch("https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query))
+        results = parse_search_results(page)
+        if not results:
+            return "No results (the search page may have changed or blocked the request)."
+        return "\n\n".join(f"{i}. {r['title']}\n{r['url']}\n{r['snippet']}" for i, r in enumerate(results, 1))
+
+    def t_read_webpage(self, url: str) -> str:
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        page, ctype = self.fetch(url)
+        if "html" not in ctype and "<html" not in page[:500].lower():
+            return page
+        title, text = html_to_text(page)
+        return f"{title}\n\n{text}" if title else text
+
+    def t_clipboard(self, action: str, text: Optional[str] = None) -> str:
+        import pyperclip
+
+        if action == "write":
+            pyperclip.copy(text or "")
+            return "Copied to the clipboard."
+        return pyperclip.paste() or "(the clipboard is empty)"
+
+    def t_set_project_goal(self, goal: str) -> str:
+        goal = goal.strip()
+        self.cfg.goal = goal
+        save_goal(self.cfg.project_dir, goal)
+        self.ui.goal(goal)
+        return f"Project goal saved: {goal}"
+
+    def t_look_at_screen(self) -> str:
+        description, preview = self.screen.look()
+        self.ui.image(preview)
+        return description
+
+    def t_click(self, element: Optional[int] = None, x: Optional[int] = None, y: Optional[int] = None,
+                button: str = "left", double: bool = False) -> str:
+        px, py = self.screen.point(element, x, y)
+        label = f"“{self.screen.elements[element - 1]['text']}”" if element else f"{px},{py}"
+        if not self._may_act_on_screen(f"{'double-click' if double else 'click'} {label}"):
+            return "The user declined this action."
+        return self.screen.click(element, x, y, button, double)
+
+    def t_type_text(self, text: str) -> str:
+        if not self._may_act_on_screen(f"type “{text[:60]}”"):
+            return "The user declined this action."
+        return self.screen.type_text(text)
+
+    def t_press_keys(self, keys: str) -> str:
+        if not self._may_act_on_screen(f"press {keys}"):
+            return "The user declined this action."
+        return self.screen.press_keys(keys)
+
+    def t_scroll(self, direction: str, amount: int = 5) -> str:
+        return self.screen.scroll(direction, amount)
+
+
+def read_pdf(p: Path, max_pages: int = 50) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return "Reading PDFs needs the pypdf package (pip install pypdf)."
+    reader = PdfReader(str(p))
+    pages = [page.extract_text() or "" for page in reader.pages[:max_pages]]
+    text = "\n\n".join(t.strip() for t in pages if t.strip())
+    more = f"\n[...{len(reader.pages) - max_pages} more pages not read]" if len(reader.pages) > max_pages else ""
+    return (text or "(no text found; the PDF may be scanned images)") + more
+
+
+def read_docx(p: Path) -> str:
+    """Text of a Word document, straight from its XML (no extra packages)."""
+    import zipfile
+
+    with zipfile.ZipFile(p) as z:
+        xml = z.read("word/document.xml").decode("utf-8", errors="replace")
+    xml = re.sub(r"</w:p>", "\n", xml)
+    xml = re.sub(r"<w:tab/>", "\t", xml)
+    return html.unescape(re.sub(r"<[^>]+>", "", xml)).strip() or "(the document is empty)"
+
+
+def parse_arguments(raw) -> dict:
+    """Tool arguments from a model: a JSON string (usually) or an object."""
+    if isinstance(raw, dict):
+        return raw
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("arguments must be a JSON object")
+    return value

@@ -1,9 +1,11 @@
-"""`v` — talk to your computer.
+"""`v` — talk to your computer. Free: it runs on an open model on your own machine.
 
+    v setup                get a free model ready for this computer (one time)
     v                      voice conversation about the project in the current directory
     v --project ~/code/app --goal "Ship the signup flow by Friday"
     v --text               type instead of talking (add --speak to still hear replies)
     v --phone              talk to v from your phone (iPhone or Android): scan the QR code
+    v --brain claude       use Claude instead (needs an Anthropic API key, paid per use)
     v say "hello"          test the voice
     v listen               test the microphone + speech recognition
     v doctor               check what's installed and what's missing
@@ -24,7 +26,7 @@ EXIT_PHRASES = {"goodbye", "bye", "exit", "quit", "stop listening", "goodbye v",
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="v", description="Voice assistant for your computer and your project.")
+    p = argparse.ArgumentParser(prog="v", description="Free voice assistant for your computer and your projects.")
     p.add_argument("--project", type=Path, default=Path.cwd(), help="project directory (default: current directory)")
     p.add_argument("--goal", help="overall project goal; saved to <project>/.v/goal.txt for next time")
     p.add_argument("--text", action="store_true", help="type instead of using the microphone")
@@ -43,8 +45,13 @@ def _parser() -> argparse.ArgumentParser:
         help="ask before: all = every click/keypress, commands and sessions; "
         "risky = commands and sessions (default); none = never",
     )
-    p.add_argument("--model", default=DEFAULT_MODEL)
-    p.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+    p.add_argument("--brain", choices=["local", "claude"], default="local",
+                   help="local = free open model on this computer (default); claude = Anthropic API (paid)")
+    p.add_argument("--local-url", help="use this OpenAI-compatible model server, e.g. http://127.0.0.1:1234")
+    p.add_argument("--local-model", help="model name on the local server (e.g. qwen3:8b for Ollama)")
+    p.add_argument("--model", default=DEFAULT_MODEL, help="Claude model, with --brain claude")
+    p.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
+                   help="Claude effort level, with --brain claude")
     p.add_argument(
         "--session-mode",
         default="acceptEdits",
@@ -57,6 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     say.add_argument("words", nargs="+")
     sub.add_parser("listen", help="record one utterance and print the transcript")
     sub.add_parser("doctor", help="check dependencies, credentials and devices")
+    sub.add_parser("setup", help="get a free model ready for this computer (one time)")
     return p
 
 
@@ -69,6 +77,7 @@ def _config(args) -> Config:
     return Config(
         project_dir=project_dir,
         goal=args.goal or load_goal(project_dir),
+        brain=args.brain,
         model=args.model,
         effort=args.effort,
         confirm=args.confirm,
@@ -82,6 +91,79 @@ def _config(args) -> Config:
 def _has_credentials(client) -> bool:
     # API key, auth token, or an `ant auth login` profile / workload identity
     return any(getattr(client, attr, None) is not None for attr in ("api_key", "auth_token", "credentials"))
+
+
+def _make_brain(cfg: Config, args, *, say, confirmer, ui, stop_speaking, computer, log=print):
+    """The agent for the chosen brain, plus Claude Code sessions (Claude only)."""
+    if cfg.brain == "claude":
+        import anthropic
+
+        from .agent import Agent
+        from .sessions import SessionManager
+
+        client = anthropic.Anthropic()
+        if not _has_credentials(client):
+            raise SystemExit(
+                "No Claude API credentials found. Set ANTHROPIC_API_KEY, or leave out --brain claude to use "
+                "the free local model."
+            )
+        sessions = SessionManager(
+            cfg.project_dir, goal=lambda: cfg.goal, permission_mode=cfg.session_permission_mode, claude_bin=cfg.claude_bin
+        )
+        agent = Agent(client, cfg, say=say, confirmer=confirmer, computer=computer, sessions=sessions, ui=ui,
+                      stop_speaking=stop_speaking)
+        sessions.on_finish = agent.on_session_finish
+        return agent, sessions, f"Claude ({cfg.model})"
+
+    from .local import LocalClient, LocalError, ensure_server
+    from .local_agent import LocalAgent
+    from .tools import Screen, Toolbox
+
+    try:
+        server = ensure_server(log, url=args.local_url, model=args.local_model)
+    except LocalError as e:
+        raise SystemExit(str(e))
+    toolbox = Toolbox(cfg, confirmer, ui, Screen(computer) if computer is not None else None)
+    agent = LocalAgent(LocalClient(server), cfg, say, toolbox, ui=ui, stop_speaking=stop_speaking)
+    return agent, None, f"{server.label} (free, on this computer)"
+
+
+def _stop_sessions(sessions) -> None:
+    if sessions is None:
+        return
+    running = [s for s in sessions.all() if s.status == "running"]
+    if running:
+        print(f"Stopping {len(running)} running session(s); resume them later with `claude --resume`.")
+        sessions.stop_all()
+
+
+def _computer(cfg: Config):
+    if not cfg.computer:
+        return None
+    try:
+        from .computer import Computer
+
+        return Computer()
+    except Exception as e:
+        print(f"(screen control unavailable: {e.__class__.__name__}: {e})")
+        return None
+
+
+def cmd_setup(args) -> int:
+    from .local import LocalError, ensure_server, machine_report
+
+    report = machine_report()
+    gpu = f"{report.vram_gb:.0f} GB graphics memory" if report.vram_gb else ("Apple Silicon" if report.apple else "no graphics card")
+    print(f"This computer: {report.ram_gb:.0f} GB RAM, {gpu}.")
+    print(f"Best free model for it: {report.choice.name} (~{report.choice.download_gb:.0f} GB download).")
+    for note in report.notes:
+        print(f"  {note}")
+    try:
+        server = ensure_server(print, url=args.local_url, model=args.local_model)
+    except LocalError as e:
+        raise SystemExit(str(e))
+    print(f"\nReady: {server.label}. Run `v` to start talking, or `v --phone` to use your phone.")
+    return 0
 
 
 def cmd_say(args) -> int:
@@ -151,8 +233,36 @@ def cmd_doctor(args) -> int:
 
         return sd.query_devices(kind="input")["name"]
 
+    def local_brain():
+        from .local import find_running
+
+        server = find_running(lambda *_: None)
+        if server is None:
+            raise RuntimeError("no free model running yet; run `v setup`")
+        return server.label
+
+    def machine():
+        from .local import machine_report
+
+        r = machine_report()
+        return f"{r.ram_gb:.0f} GB RAM, {r.vram_gb:.0f} GB GPU -> {r.choice.name}"
+
+    print(" free brain (default)")
+    _check("this computer", machine)
+    _check("local model", local_brain)
+    def ollama():
+        path = shutil.which("ollama")
+        if not path:
+            raise RuntimeError("not installed (optional, free: ollama.com)")
+        return path
+
+    _check("Ollama", ollama)
+    _check("screen reading (RapidOCR)", imports("rapidocr_onnxruntime"))
+    _check("PDF reading (pypdf)", imports("pypdf"))
+    print(" Claude brain (optional, paid)")
     _check("Claude API credentials", creds)
     _check("Claude Code CLI", claude_cli)
+    print(" voice and screen")
     _check("speech recognition (faster-whisper)", imports("faster_whisper"))
     _check("microphone", microphone)
     if not _check("Kokoro voice", imports("kokoro")):
@@ -162,19 +272,11 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_run(args) -> int:
-    import anthropic
-
-    from .agent import Agent
     from .confirm import Confirmer
-    from .sessions import SessionManager
     from .speech import Speaker, SilentEngine, make_engine
+    from .ui import TerminalUI
 
     cfg = _config(args)
-    client = anthropic.Anthropic()
-    if not _has_credentials(client):
-        raise SystemExit(
-            "No Claude API credentials found. Set ANTHROPIC_API_KEY (or log in with `ant auth login`), then run v again."
-        )
     text_mode = args.text
     speaker = Speaker(make_engine(cfg.voice) if (not text_mode or args.speak) else SilentEngine())
 
@@ -203,36 +305,16 @@ def cmd_run(args) -> int:
         speaker.say(question)
         return hear("(yes/no)> " if text_mode else "you> ")
 
-    computer = None
-    if cfg.computer:
-        try:
-            from .computer import Computer
-
-            computer = Computer()
-        except Exception as e:
-            print(f"(screen control unavailable: {e.__class__.__name__}: {e})")
-
-    sessions = SessionManager(
-        cfg.project_dir,
-        goal=lambda: cfg.goal,
-        permission_mode=cfg.session_permission_mode,
-        claude_bin=cfg.claude_bin,
+    agent, sessions, brain = _make_brain(
+        cfg, args, say=speaker.say, confirmer=Confirmer(cfg.confirm, ask), ui=TerminalUI(),
+        stop_speaking=speaker.stop, computer=_computer(cfg),
     )
-    agent = Agent(
-        client,
-        cfg,
-        say=speaker.say,
-        confirmer=Confirmer(cfg.confirm, ask),
-        computer=computer,
-        sessions=sessions,
-        stop_speaking=speaker.stop,
-    )
-    sessions.on_finish = agent.on_session_finish
 
     print(f"v · {cfg.project_dir}")
+    print(f"brain: {brain}")
     print(f"goal: {cfg.goal or '(none yet)'}")
     print("Ctrl+C interrupts what v is doing; Ctrl+C while it's listening (or saying goodbye) quits.\n")
-    greeting = f"Ready. We're working toward: {cfg.goal}" if cfg.goal else "Ready. What are we working on?"
+    greeting = f"Ready. We're working toward: {cfg.goal}" if cfg.goal else "Ready. What can I do for you?"
     print(f"v> {greeting}")
     speaker.say(greeting)
 
@@ -247,15 +329,13 @@ def cmd_run(args) -> int:
             if text.lower().strip(" .!?,") in EXIT_PHRASES:
                 break
             print("v> ", end="", flush=True)
-            try:
-                agent.turn(text)
-            except anthropic.AuthenticationError:
-                raise SystemExit("Claude API authentication failed. Set ANTHROPIC_API_KEY and try again.")
+            agent.turn(text)
+    except Exception as e:
+        if e.__class__.__name__ == "AuthenticationError":
+            raise SystemExit("Claude API authentication failed. Set ANTHROPIC_API_KEY and try again.")
+        raise
     finally:
-        running = [s for s in sessions.all() if s.status == "running"]
-        if running:
-            print(f"Stopping {len(running)} running session(s); resume them later with `claude --resume`.")
-            sessions.stop_all()
+        _stop_sessions(sessions)
         speaker.say("Bye.")
         speaker.wait()
         speaker.close()
@@ -265,22 +345,12 @@ def cmd_run(args) -> int:
 def cmd_phone(args) -> int:
     import threading
 
-    import anthropic
-
     from . import phone
-    from .agent import Agent
     from .confirm import Confirmer
-    from .sessions import SessionManager
     from .speech import Speaker
     from .ui import TeeUI, TerminalUI
 
     cfg = _config(args)
-    client = anthropic.Anthropic()
-    if not _has_credentials(client):
-        raise SystemExit(
-            "No Claude API credentials found. Set ANTHROPIC_API_KEY (or log in with `ant auth login`), then run v again."
-        )
-
     hub, media = phone.Hub(), phone.MediaStore()
 
     synth = None
@@ -303,29 +373,11 @@ def cmd_phone(args) -> int:
     speaker = Speaker(voice)
     bridge = phone.Bridge(hub, transcriber, say=speaker.say)
 
-    computer = None
-    if cfg.computer:
-        try:
-            from .computer import Computer
-
-            computer = Computer()
-        except Exception as e:
-            print(f"(screen control unavailable: {e.__class__.__name__}: {e})")
-
-    sessions = SessionManager(
-        cfg.project_dir, goal=lambda: cfg.goal, permission_mode=cfg.session_permission_mode, claude_bin=cfg.claude_bin
+    computer = _computer(cfg)
+    agent, sessions, brain = _make_brain(
+        cfg, args, say=speaker.say, confirmer=Confirmer(cfg.confirm, bridge.ask),
+        ui=TeeUI(TerminalUI(), phone.PhoneUI(hub, media)), stop_speaking=speaker.stop, computer=computer,
     )
-    agent = Agent(
-        client,
-        cfg,
-        say=speaker.say,
-        confirmer=Confirmer(cfg.confirm, bridge.ask),
-        computer=computer,
-        sessions=sessions,
-        ui=TeeUI(TerminalUI(), phone.PhoneUI(hub, media)),
-        stop_speaking=speaker.stop,
-    )
-    sessions.on_finish = agent.on_session_finish
     bridge.agent = agent
 
     ip = phone.lan_ip()
@@ -350,6 +402,7 @@ def cmd_phone(args) -> int:
         "voice": voice.mode,
         "computer": computer is not None,
         "confirm": cfg.confirm,
+        "brain": brain,
     }
     try:
         server = phone.PhoneServer(("0.0.0.0", args.port), hub, media, bridge, token, hello, ssl_ctx)
@@ -358,6 +411,7 @@ def cmd_phone(args) -> int:
 
     url = f"{scheme}://{ip}:{args.port}/?t={token}"
     print(f"\nv · {cfg.project_dir}")
+    print(f"brain: {brain}")
     print(f"goal: {cfg.goal or '(none yet)'}\n")
     print("Open this on your phone (same Wi-Fi), or scan the code:\n")
     if not phone.print_qr(url):
@@ -376,10 +430,7 @@ def cmd_phone(args) -> int:
         pass
     finally:
         bridge.stop()
-        running = [s for s in sessions.all() if s.status == "running"]
-        if running:
-            print(f"Stopping {len(running)} running session(s); resume them later with `claude --resume`.")
-            sessions.stop_all()
+        _stop_sessions(sessions)
         server.stopping.set()
         server.server_close()
         speaker.close()
@@ -394,6 +445,8 @@ def main(argv=None) -> int:
         return cmd_listen(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
+    if args.cmd == "setup":
+        return cmd_setup(args)
     if args.phone:
         return cmd_phone(args)
     return cmd_run(args)

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "v"
 version = "0.1.0"
-description = "Voice assistant that talks with you, controls your computer, and runs Claude Code sessions toward your project goal."
+description = "Free voice assistant that talks with you, works on your computer and files, and runs on open models on your own machine."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -26,7 +26,11 @@ voice = [
 computer = ["pyautogui", "mss", "pillow"]
 # Use a phone as v's mic, speaker and screen: QR code + HTTPS certificate.
 phone = ["qrcode", "cryptography"]
-all = ["v[voice,computer,phone]"]
+# The free brain: v's own model runner (not needed if you use Ollama or LM
+# Studio), reading text off the screen, and reading PDFs.
+local = ["cheapstack @ git+https://github.com/psaravanansep2/cheapstack"]
+free = ["rapidocr_onnxruntime", "pypdf"]
+all = ["v[voice,computer,phone,local,free]"]
 dev = ["pytest"]
 
 [project.scripts]

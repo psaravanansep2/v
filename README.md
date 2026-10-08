@@ -1,61 +1,77 @@
 # v
 
-A voice assistant for your computer and your project. You talk, v answers
-out loud, and it can act. It can look at your screen and use the mouse and
-keyboard, run shell commands, and start Claude Code sessions that do the
-coding work in the background. All of it is aimed at a project goal that v
-remembers between runs.
+A free voice assistant that gets things done on your computer. Talk to it
+from the computer or from your phone. It answers out loud, works with your
+files, apps and the web, and can use apps on your screen.
+
+**Free:** v runs on open AI models on your own machine. No account, no
+subscription, no API key, nothing sent to an AI company.
 
 ```
-you> the signup form still doesn't validate emails, can you get that fixed?
-v>   I'll hand that to a coding session.
-v?   Start a Claude Code session to add email validation to the signup form?
-you> yes
-v>   Started it. I'll tell you when it's done.
-     … (you keep talking, or go get coffee)
-v>   Session 1 finished. I added email validation with tests, and the suite passes.
-you> great, open the signup page in the browser so I can see it
-v>   Opening the browser now. … It's up on localhost 3000, the form is showing.
+you> find the PDF invoice I downloaded last week and tell me the total
+v>   Found invoice-0423.pdf in Downloads. The total is 1,240 dollars, due May 30th.
+you> put that in my budget spreadsheet notes and open my email
+v>   Added it to budget-notes.txt and opened Mail.
+you> search for cheap flights to Lisbon in June
+v>   Top results are from Google Flights, Skyscanner and Kayak. Want me to open one?
 ```
 
-## How it works
+## What it can do
 
-| Part | What it does | Runs where |
+| | |
+|---|---|
+| **Files** | Find, read and summarize files: text, PDF, Word. Write notes, edit documents, organize folders |
+| **Apps and websites** | Open any app, file, folder or web page |
+| **The web** | Search the web and read pages, so you get the answer and not a list of links |
+| **Your screen** | Read what's on screen and click, type, press shortcuts and scroll, to fill forms and use apps |
+| **Clipboard and shell** | Copy and paste for you; run commands, asking first |
+| **Projects** | Remembers what you're working toward (`--goal`) and keeps its help pointed at it |
+| **Phone** | Use any iPhone or Android phone as v's microphone, speaker and screen |
+
+It asks before running commands or changing files outside your project folder.
+
+## What you need
+
+A computer that can run a free model. v picks the best one for your machine automatically:
+
+| Your computer | Model v uses | Download |
 |---|---|---|
-| Listening | Mic capture with automatic start/stop (no push-to-talk), speech-to-text with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Your machine |
-| Speaking | [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) neural voice, sentence by sentence while the reply is still streaming; OS voices via pyttsx3 as a fallback | Your machine |
-| Thinking | Claude Opus 5.5 with a tool loop. It speaks short progress notes between steps so you hear what it's doing | Claude API |
-| Screen control | Claude's computer toolset: screenshots, zoom, clicks, typing, keys, scrolling, dragging (pyautogui + mss) | Your machine |
-| Coding work | Background `claude -p` sessions in your project directory, told the project goal, resumable for follow-ups | Your machine |
-| Memory | The project goal is saved in `<project>/.v/goal.txt` and picked up on the next run | Your machine |
-| Phone | Optional: any iPhone or Android phone becomes v's mic, speaker and screen through its web browser | Your phone + your machine |
+| 8 GB RAM laptop | Qwen3 4B | 2.5 GB |
+| 16 GB RAM, or 16 GB Mac | Qwen3 8B | 5 GB |
+| 32 GB Mac, or 16 GB graphics card | gpt-oss 20B | 12 GB |
+| 64 GB Mac, or 24 GB graphics card | Qwen3 30B | 19 GB |
+
+All of these are open models under the Apache 2.0 license. Apple Silicon Macs and computers with a graphics card answer fastest; ordinary laptops work, just slower.
 
 ## Install
 
-```bash
-pip install -e ".[all]"       # voice + screen control + phone
-export ANTHROPIC_API_KEY=...   # or: ant auth login
-v doctor                       # shows what's working and what's missing
-```
+1. **Install [Ollama](https://ollama.com)** (free; one-click installer for Mac, Windows and Linux). v uses it to run the model. *(Optional: without it, v downloads and runs llama.cpp itself through [cheapstack](https://github.com/psaravanansep2/cheapstack).)*
+2. **Install v** (needs Python 3.10+):
+   ```bash
+   pip install "v[all] @ git+https://github.com/psaravanansep2/v"
+   v setup      # picks and downloads the right free model for this computer (one time)
+   v doctor     # shows what's working and what's missing
+   ```
 
-- **Python 3.10+.** Kokoro needs Python 3.12 or older for now. On 3.13, v falls back to your OS voices automatically.
-- **Claude Code** must be installed for background sessions (`claude` on your PATH).
-- **macOS:** allow your terminal under System Settings → Privacy & Security → *Accessibility* (mouse and keyboard), *Screen Recording* (screenshots) and *Microphone*.
-- **Linux:** needs an X11 session (pyautogui doesn't drive Wayland natively). Kokoro also wants `espeak-ng` installed for unusual words.
+Platform notes:
+
+- **macOS:** allow your terminal under System Settings → Privacy & Security → *Accessibility* (mouse and keyboard), *Screen Recording* (seeing the screen) and *Microphone*.
+- **Linux:** screen control needs an X11 session.
+- **Python 3.13:** the Kokoro voice isn't available yet, so v uses your computer's built-in voice.
 
 ## Use
 
 ```bash
-cd ~/code/my-app
-v --goal "Ship the signup flow by Friday"   # first time: set the goal
-v                                           # next time: it remembers
+v                                   # talk to it (starts listening when you speak, stops when you pause)
+v --goal "Plan the move to Lisbon"  # set what you're working toward; v remembers it for this folder
+v --text                            # type instead of talking
+v --phone                           # use your phone instead (see below)
 ```
 
-- Just talk; v starts listening when you speak and stops when you pause.
-- **Ctrl+C** while v is working interrupts it. Ctrl+C while it's listening quits, and so does saying "goodbye".
+- **Interrupt:** Ctrl+C stops what v is doing. Ctrl+C while it's listening quits, and so does saying "goodbye".
 - **Emergency stop for screen control:** slam the mouse into a screen corner.
 
-## Use it from your phone (iPhone or Android)
+### From your phone (iPhone or Android)
 
 ```bash
 v --phone
@@ -64,72 +80,71 @@ v --phone
 v prints a QR code. Scan it with your phone's camera (same Wi-Fi as the
 computer) and v opens in the browser: no app to install, no app store.
 
-- **Talk:** tap the big button and speak. It stops when you pause, and your words are transcribed on your computer.
-- **Watch:** see v's replies and progress, plus the latest screenshot of your computer as v works.
-- **Approve:** tap Yes or No when v asks before running something, or just say it.
-- **Stop:** tap Stop to interrupt v, or mute its voice.
+- **Talk:** tap the big button and speak.
+- **Watch:** replies appear as they come, with a preview of your computer's screen while v works on it.
+- **Approve:** tap Yes or No when v asks before doing something.
+- **Stop:** tap Stop to interrupt v.
 - **Install:** keep it one tap away with Share → *Add to Home Screen* (iPhone) or ⋮ → *Add to Home screen* (Android).
 
 Things to know:
 
 - **First visit:** your phone warns about the certificate. v makes its own HTTPS certificate on your computer, because phones only allow the microphone on secure pages. Tap *Show Details* → *visit this website* (iPhone) or *Advanced* → *Proceed* (Android) once.
-- **Away from home:** use [Tailscale](https://tailscale.com) on both devices and pass its real certificate with `v --phone --cert host.crt --key host.key` (from `tailscale cert`). Don't expose the port to the internet.
+- **Away from home:** use [Tailscale](https://tailscale.com) (free for personal use) and `v --phone --cert host.crt --key host.key` with its certificate (from `tailscale cert`). Don't expose the port to the internet.
 - **The link is a key:** anyone with it can control your computer, so keep it private. `v --phone --new-token` makes a new one and unpairs every phone.
-- **Missing pieces fall back gracefully:** without Whisper on the computer, the phone uses its own speech recognition. Without Kokoro, the phone reads replies in its own voice. With `--http`, typing and the keyboard's dictation key still work.
-- **v can't control the phone itself.** The phone is a remote for your computer; iPhones don't allow apps to control other apps.
-
-Other modes:
-
-```bash
-v --text                  # type instead of talking (add --speak to still hear replies)
-v --no-computer           # no screen/mouse/keyboard access
-v say "testing one two"   # test the voice
-v listen                  # test the mic + speech recognition
-```
+- **v can't control the phone itself.** The phone is a remote for your computer; iPhones don't let apps control other apps.
 
 ### What v asks before doing
 
-`--confirm` decides which actions need your spoken "yes" first:
+`--confirm` decides which actions need your "yes" first:
 
 | Policy | Asks before |
 |---|---|
-| `risky` (default) | shell commands, starting/continuing Claude Code sessions |
-| `all` | the above, plus every click, keystroke and drag (batched into one question per step) |
+| `risky` (default) | commands, and changing files outside the project folder |
+| `all` | the above, plus every file change, click, keystroke and drag |
 | `none` | nothing |
 
-Anything that isn't a clear yes counts as no, and v is told you declined.
-Background sessions run with Claude Code's `acceptEdits` permission mode by
-default: they can edit files in the project, but shell commands outside the
-read-only set are refused. Use `--session-mode auto` to let Claude Code's
-classifier approve commands instead.
+Anything that isn't a clear yes counts as no.
 
 ### Options
 
 | Flag | Default | |
 |---|---|---|
-| `--project DIR` | current dir | Project directory for commands and sessions |
-| `--goal TEXT` | saved goal | Set and save the project goal |
-| `--effort` | `medium` | Claude's effort level; `high` for harder autonomous work, `low` for snappier chat |
-| `--model` | `claude-opus-5-5` | |
-| `--stt-model` | `base.en` | faster-whisper size: `tiny.en` (fastest) … `small.en` / `medium.en` (most accurate) |
+| `--project DIR` | current folder | Folder v works in |
+| `--goal TEXT` | saved goal | Set and save what you're working toward |
+| `--local-model NAME` | best fit | A specific model, e.g. `qwen3:14b` with Ollama |
+| `--local-url URL` | auto | Any OpenAI-compatible server, e.g. LM Studio at `http://127.0.0.1:1234` |
+| `--no-computer` | off | Don't let v see the screen or use the mouse and keyboard |
+| `--stt-model` | `base.en` | Speech recognition size: `tiny.en` (fastest) … `small.en` (most accurate) |
 | `--voice` | `af_heart` | Kokoro voice (`am_michael`, `bf_emma`, …) |
-| `--session-mode` | `acceptEdits` | Claude Code permission mode for sessions |
-| `--phone` | off | Serve the phone page instead of using this computer's mic and speakers |
-| `--port` | `8765` | Phone mode port |
-| `--cert`, `--key` | self-signed | Phone mode TLS certificate (e.g. from Tailscale) |
-| `--http` | off | Phone mode without HTTPS (no talk button; typing and keyboard dictation work) |
-| `--new-token` | off | New phone pairing code |
+| `--phone`, `--port`, `--cert`, `--key`, `--http`, `--new-token` | | Phone mode (above) |
 
-## Notes on the Claude API usage
+## How it works
 
-- Computer use goes through the `computer_toolset_20260801` toolset, the only form Opus 5.5 accepts on the Claude API. Screenshots are scaled to fit the image limits, and Claude's coordinates are mapped back to your screen, including on Retina displays.
-- The conversation history is append-only. Opus 5.5 ties its thinking to the exact conversation, so old screenshots are cleared server-side with context editing (`clear_tool_uses_20250919`) instead of being pruned locally.
-- `fallbacks: "default"` is on. If a request is declined by a safety classifier, the API retries it on a fallback model in the same call.
-- Progress notes between tool calls come from `thinking.display: "updates"`, and v speaks them.
+| Part | What runs it | Where |
+|---|---|---|
+| Listening | Microphone + [faster-whisper](https://github.com/SYSTRAN/faster-whisper) speech recognition | Your computer (or the phone's own) |
+| Speaking | [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) neural voice, sentence by sentence while the reply streams | Your computer (or the phone's own) |
+| Thinking | An open model through Ollama, LM Studio, or llama.cpp via cheapstack | Your computer |
+| Seeing the screen | [RapidOCR](https://github.com/RapidAI/RapidOCR) reads the text on screen; v clicks things by number | Your computer |
+| Web search | DuckDuckGo's plain HTML results | The internet |
+
+Everything except web search and page reading stays on your machine.
+
+**Honest limits:** free models are less capable than paid frontier models.
+They handle everyday tasks well, but long multi-step jobs and complicated
+screen work go wrong more often. Screen control reads text, so it can't
+click icons that have no label.
+
+## Optional: Claude
+
+If you have an Anthropic API key, `v --brain claude` uses Claude Opus 5.5
+instead (paid per use). It sees the screen directly, handles harder tasks,
+and can run Claude Code sessions in the background for coding work. Set
+`ANTHROPIC_API_KEY` first. Options: `--model`, `--effort`, `--session-mode`.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). v calls the Claude API, so each person running it needs their own Anthropic API key.
+MIT; see [LICENSE](LICENSE).
 
 ## Development
 
@@ -138,8 +153,7 @@ pip install -e ".[all,dev]"
 pytest
 ```
 
-The tests use fakes for the mic, speakers, screen and `claude` binary; the
-phone server is tested over real HTTP and HTTPS connections. The
-agent tests run the real Anthropic SDK against a fake HTTP server that
-replays streaming responses. That checks both the request v sends and its
-handling of real stream events.
+The tests use fakes for the mic, speakers, screen, OCR, model servers
+(OpenAI-style and Ollama) and the `claude` binary, talking over real HTTP.
+The Claude agent tests run the real Anthropic SDK against a fake streaming
+server.

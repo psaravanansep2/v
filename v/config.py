@@ -18,6 +18,9 @@ CONFIRM_POLICIES = ("all", "risky", "none")
 class Config:
     project_dir: Path
     goal: str = ""
+    # local  = a free open model running on this computer (default)
+    # claude = Claude via the Anthropic API (needs an API key; paid per use)
+    brain: str = "local"
     model: str = DEFAULT_MODEL
     # Opus 5.5 defaults to medium; it keeps spoken replies snappy while still
     # handling multi-step computer use. Raise it for harder autonomous work.

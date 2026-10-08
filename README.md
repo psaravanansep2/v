@@ -65,8 +65,12 @@ A computer that can run a free model. v picks the best one for your machine auto
 | 16 GB RAM, or 16 GB Mac | Qwen3 8B | 5 GB |
 | 32 GB Mac, or 16 GB graphics card | gpt-oss 20B | 12 GB |
 | 64 GB Mac, or 24 GB graphics card | Qwen3 30B | 19 GB |
+| 96–192 GB Mac, or 128 GB RAM plus an 8 GB+ graphics card | gpt-oss 120B | 63 GB |
+| 256 GB Mac, or 256 GB RAM plus a 32 GB graphics card | Qwen3 235B | 142 GB |
 
 All of these are open models under the Apache 2.0 license. Apple Silicon Macs and computers with a graphics card answer fastest; ordinary laptops work, just slower.
+
+The two biggest come much closer to paid AI. On a PC, v keeps most of their weights in ordinary RAM and the rest on the graphics card (it's a "mixture of experts" model, so only a small part works on each word). They need a graphics card or an Apple Silicon Mac; on a processor alone they'd be too slow, so v picks a smaller model there. If the disk doesn't have room for the download, v picks the biggest model that fits. To choose yourself: `v --local-model qwen3:30b`.
 
 ## Install
 

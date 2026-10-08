@@ -35,6 +35,19 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest -q tests/test_ui.py
 
+  downloads:
+    name: every model download exists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q -rw tests/test_downloads.py
+        env:
+          V_NETWORK_TESTS: "1"
+
   installer:
     name: installer (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -101,6 +114,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: v check --local-model qwen3:4b
+      - name: llama.cpp can keep a big model's experts in RAM (--cpu-moe)
+        if: matrix.runner == 'llama.cpp'
+        run: |
+          server=$(find ~/.v/local/bin -name llama-server -type f | head -1)
+          "$server" --help 2>&1 | grep -- "--cpu-moe"
       - name: v's own model server log
         if: failure() && matrix.runner == 'llama.cpp'
         run: ls -la ~/.v/local ~/.v/local/models || true

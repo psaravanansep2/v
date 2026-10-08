@@ -402,3 +402,14 @@ def test_picks_the_right_llama_cpp_download(names, platform, machine, vulkan, ex
 def test_no_matching_download_lists_what_was_there():
     with pytest.raises(local.LocalError, match="assets: llama-b1-bin-plan9-x64.zip"):
         local.pick_llama_asset([{"name": "llama-b1-bin-plan9-x64.zip"}], "linux", "x86_64")
+
+
+def test_skips_a_release_without_builds():
+    releases = [
+        {"tag_name": "nightly", "assets": [{"name": "nightly-tag.txt"}]},
+        {"tag_name": "b7001", "draft": True, "assets": [{"name": "llama-b7001-bin-ubuntu-x64.zip"}]},
+        {"tag_name": "b7000", "assets": [{"name": n} for n in OLD_STYLE]},
+    ]
+    assert local.pick_llama_download(releases, platform="linux", machine="x86_64")["name"] == "llama-b6000-bin-ubuntu-x64.zip"
+    with pytest.raises(local.LocalError):
+        local.pick_llama_download(releases[:1], platform="linux", machine="x86_64")

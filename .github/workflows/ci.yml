@@ -83,8 +83,8 @@ jobs:
       - name: llama.cpp release downloads (for the record)
         if: matrix.runner == 'llama.cpp'
         run: |
-          curl -s -H "Authorization: Bearer ${{ github.token }}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest \
-            | python -c "import json, sys; print('\n'.join(a['name'] for a in json.load(sys.stdin)['assets']))"
+          curl -s -H "Authorization: Bearer ${{ github.token }}" "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=3" \
+            | python -c "import json, sys; [print(r['tag_name'], len(r['assets']), [a['name'] for a in r['assets']][:12]) for r in json.load(sys.stdin)]"
       - name: v check with a real model
         env:
           GITHUB_TOKEN: ${{ github.token }}

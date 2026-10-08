@@ -492,7 +492,7 @@ def download_with_progress(url: str, dest: Path, log, expected_size: Optional[in
     return dest
 
 
-LLAMA_RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+LLAMA_RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15"
 _OS_TOKENS = {"linux": {"ubuntu", "linux"}, "darwin": {"macos", "darwin", "osx", "mac"}, "win": {"win", "windows"}}
 _ARCH_TOKENS = {"x64": {"x64", "x86", "amd64", "x86_64"}, "arm64": {"arm64", "aarch64"}}
 # builds that need a particular GPU runtime installed; v uses the plain build (or Vulkan)
@@ -531,13 +531,27 @@ def pick_llama_asset(assets: list, platform: str = sys.platform, machine: str = 
     return plain[0][0]
 
 
-def _latest_llama_release() -> dict:
+def _recent_llama_releases() -> list:
     headers = {"User-Agent": "v", "Accept": "application/vnd.github+json"}
     token = os.environ.get("GITHUB_TOKEN")
     if token:  # optional: avoids GitHub's hourly limit for anonymous requests on shared machines
         headers["Authorization"] = f"Bearer {token}"
     with urllib.request.urlopen(urllib.request.Request(LLAMA_RELEASES, headers=headers), timeout=20) as resp:
         return json.load(resp)
+
+
+def pick_llama_download(releases: list, prefer_vulkan: bool = False, **where) -> dict:
+    """The newest release that has a build for this computer. The newest one
+    can be incomplete while it uploads, or a nightly pointer with no builds."""
+    error = None
+    for release in releases:
+        if release.get("draft"):
+            continue
+        try:
+            return pick_llama_asset(release.get("assets", []), prefer_vulkan=prefer_vulkan, **where)
+        except LocalError as e:
+            error = error or e
+    raise error or LocalError("no llama.cpp releases found")
 
 
 def _server_info_path() -> Path:
@@ -571,7 +585,7 @@ def _start_llama_server(choice: ModelChoice, log) -> LocalServer:
         binary = binaries[0]
     else:
         log("Fetching llama.cpp (one time)…")
-        asset = pick_llama_asset(_latest_llama_release().get("assets", []), prefer_vulkan=gpu_memory_gb() > 0)
+        asset = pick_llama_download(_recent_llama_releases(), prefer_vulkan=gpu_memory_gb() > 0)
         log(f"  {asset['name']}")
         binary = release.download_and_extract(asset, bin_dir)
 

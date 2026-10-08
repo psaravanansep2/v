@@ -805,13 +805,15 @@ def make_tasks(families=None, per_family: int = 1, seed: int = 2026, split: str 
     return [FAMILIES[name](rng, split) for _ in range(per_family) for name in names]
 
 
-def run_suite(client, tasks: list, log: Callable[[str], None] = print) -> list:
+def run_suite(client, tasks: list, log: Callable[[str], None] = print, after=None) -> list:
     results = []
     for i, task in enumerate(tasks, 1):
         r = run_task(task, client)
         mark = "PASS" if r.passed else "FAIL"
         log(f"  {mark}  {r.family:<20} {r.seconds:5.1f}s  {task.prompt[:60]}" + ("" if r.passed else f"  — {r.reason}"))
         results.append(r)
+        if after:
+            after(results)  # e.g. save as it goes, so a run cut short still has its results
     return results
 
 
@@ -853,8 +855,10 @@ def run_eval(url=None, model=None, families=None, per_family: int = 1, seed: int
     client = LocalClient(server, timeout=600)
     tasks = make_tasks(families, per_family, seed)
     log(f"v eval: {len(tasks)} everyday tasks with {server.label}\n")
-    results = run_suite(client, tasks, log)
+    def save(results):
+        if json_path:
+            Path(json_path).write_text(json.dumps(to_json(results, server.label), indent=2), encoding="utf-8")
+
+    results = run_suite(client, tasks, log, after=save)
     log("\n" + summary(results))
-    if json_path:
-        Path(json_path).write_text(json.dumps(to_json(results, server.label), indent=2), encoding="utf-8")
     return 0

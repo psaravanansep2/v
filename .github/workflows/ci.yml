@@ -127,7 +127,7 @@ jobs:
   real-model:
     name: real free model via ${{ matrix.runner }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -154,10 +154,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: v check --local-model qwen3:4b
       - name: v eval with a real model (everyday tasks; a measurement, not a pass/fail gate)
-        if: matrix.runner == 'ollama'
+        # on v's own llama.cpp runner, which reuses what it already read (on this CPU-only machine,
+        # Ollama re-reads the whole conversation each step and the tasks don't fit in the time)
+        if: matrix.runner == 'llama.cpp'
+        timeout-minutes: 50
         run: v eval --local-model qwen3:4b --json eval-qwen3-4b.json
       - uses: actions/upload-artifact@v4
-        if: matrix.runner == 'ollama'
+        if: matrix.runner == 'llama.cpp' && always()
         with:
           name: eval-qwen3-4b
           path: eval-qwen3-4b.json

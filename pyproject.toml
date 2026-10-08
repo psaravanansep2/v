@@ -12,24 +12,21 @@ license = { text = "MIT" }
 dependencies = ["anthropic>=1.12.0"]
 
 [project.optional-dependencies]
-# Microphone + speech recognition + spoken replies. Kokoro (the natural voice)
-# doesn't publish wheels for Python 3.13 yet; there v falls back to pyttsx3,
-# which uses the operating system's built-in voices.
-voice = [
-    "numpy",
-    "sounddevice",
-    "faster-whisper",
-    "kokoro>=0.9.4; python_version < '3.13'",
-    "pyttsx3",
-]
+# Microphone + speech recognition + spoken replies (the computer's built-in
+# voice). In the app window and on phones, the browser's voice is used.
+voice = ["numpy", "sounddevice", "faster-whisper", "pyttsx3"]
+# The most natural voice. It needs PyTorch (a large download), so it's
+# separate, and Kokoro doesn't support Python 3.13 yet.
+kokoro = ["kokoro>=0.9.4; python_version < '3.13'"]
 # Screenshots + mouse/keyboard control.
 computer = ["pyautogui", "mss", "pillow"]
 # Use a phone as v's mic, speaker and screen: QR code + HTTPS certificate.
 phone = ["qrcode", "cryptography"]
-# The free brain: v's own model runner (not needed if you use Ollama or LM
-# Studio), reading text off the screen, and reading PDFs.
-local = ["cheapstack @ git+https://github.com/psaravanansep2/cheapstack"]
-free = ["rapidocr_onnxruntime", "pypdf"]
+# v's own model runner (not needed with Ollama or LM Studio). A zip archive,
+# so installing needs no git.
+local = ["cheapstack @ https://github.com/psaravanansep2/cheapstack/archive/refs/heads/master.zip"]
+# Reading text off the screen, and reading PDFs.
+free = ["rapidocr_onnxruntime", "pypdf", "pillow"]
 all = ["v[voice,computer,phone,local,free]"]
 dev = ["pytest"]
 

@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import ssl
 import threading
 import time
@@ -219,7 +220,8 @@ def test_token_is_persisted_and_can_be_replaced(tmp_path):
     first = phone.load_token(state_dir=tmp_path)
     assert len(first) >= 16
     assert phone.load_token(state_dir=tmp_path) == first
-    assert (tmp_path / "token").stat().st_mode & 0o077 == 0  # private to the user
+    if os.name == "posix":
+        assert (tmp_path / "token").stat().st_mode & 0o077 == 0  # private to the user
     assert phone.load_token(new=True, state_dir=tmp_path) != first
 
 

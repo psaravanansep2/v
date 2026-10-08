@@ -3,9 +3,13 @@ import sys
 import threading
 import time
 
+import os
+
 import pytest
 
 from v.sessions import SessionManager
+
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake claude is a POSIX shell script")
 
 FAKE_CLAUDE = r'''
 import json, os, sys, time, signal

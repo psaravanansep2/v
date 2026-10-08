@@ -4,11 +4,14 @@
     v                      voice conversation about the project in the current directory
     v --project ~/code/app --goal "Ship the signup flow by Friday"
     v --text               type instead of talking (add --speak to still hear replies)
+    v app                  open v in its own window (and pair your phone from there)
     v --phone              talk to v from your phone (iPhone or Android): scan the QR code
+    v install-shortcut     put a v icon on the desktop / in the app menu
     v --brain claude       use Claude instead (needs an Anthropic API key, paid per use)
     v say "hello"          test the voice
     v listen               test the microphone + speech recognition
     v doctor               check what's installed and what's missing
+    v check                test v end to end with your real model
 """
 
 from __future__ import annotations
@@ -25,46 +28,59 @@ from .config import CONFIRM_POLICIES, DEFAULT_MODEL, Config, load_goal, save_goa
 EXIT_PHRASES = {"goodbye", "bye", "exit", "quit", "stop listening", "goodbye v", "bye v"}
 
 
+def _add_options(p: argparse.ArgumentParser, top: bool) -> None:
+    """The options every command shares. They're accepted before or after the
+    command name (`v --text check` and `v check --text`); on commands, the
+    defaults are left to the top level so they don't overwrite it."""
+
+    def opt(*names, default=None, **kwargs):
+        p.add_argument(*names, default=default if top else argparse.SUPPRESS, **kwargs)
+
+    opt("--project", type=Path, default=Path.cwd(), help="project directory (default: current directory)")
+    opt("--goal", help="overall project goal; saved to <project>/.v/goal.txt for next time")
+    opt("--text", action="store_true", default=False, help="type instead of using the microphone")
+    opt("--speak", action="store_true", default=False, help="in --text mode, still speak replies")
+    opt("--no-computer", action="store_true", default=False, help="don't let v see the screen or use mouse/keyboard")
+    opt("--phone", action="store_true", default=False, help="use your phone (iPhone or Android) as v's mic, speaker and screen")
+    opt("--port", type=int, default=8765, help="phone mode: port to serve on (default 8765)")
+    opt("--http", action="store_true", default=False, help="phone mode: plain HTTP (typing and keyboard dictation still work)")
+    opt("--cert", type=Path, help="phone mode: TLS certificate file, e.g. from `tailscale cert`")
+    opt("--key", type=Path, help="phone mode: TLS private key file for --cert")
+    opt("--new-token", action="store_true", default=False, help="phone mode: new pairing code (unpairs every phone)")
+    opt("--confirm", choices=CONFIRM_POLICIES, default="risky",
+        help="ask before: all = every click/keypress, commands and file changes; risky = commands and changes "
+        "outside the project (default); none = never")
+    opt("--brain", choices=["local", "claude"], default="local",
+        help="local = free open model on this computer (default); claude = Anthropic API (paid)")
+    opt("--local-url", help="use this OpenAI-compatible model server, e.g. http://127.0.0.1:1234")
+    opt("--local-model", help="model name on the local server (e.g. qwen3:8b for Ollama)")
+    opt("--model", default=DEFAULT_MODEL, help="Claude model, with --brain claude")
+    opt("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
+        help="Claude effort level, with --brain claude")
+    opt("--session-mode", default="acceptEdits",
+        help="permission mode for background Claude Code sessions (acceptEdits, auto, dontAsk, ...)")
+    opt("--stt-model", default="base.en", help="faster-whisper model size (tiny.en, base.en, small.en, ...)")
+    opt("--voice", default="af_heart", help="Kokoro voice name")
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="v", description="Free voice assistant for your computer and your projects.")
-    p.add_argument("--project", type=Path, default=Path.cwd(), help="project directory (default: current directory)")
-    p.add_argument("--goal", help="overall project goal; saved to <project>/.v/goal.txt for next time")
-    p.add_argument("--text", action="store_true", help="type instead of using the microphone")
-    p.add_argument("--speak", action="store_true", help="in --text mode, still speak replies")
-    p.add_argument("--no-computer", action="store_true", help="don't let v see the screen or use mouse/keyboard")
-    p.add_argument("--phone", action="store_true", help="use your phone (iPhone or Android) as v's mic, speaker and screen")
-    p.add_argument("--port", type=int, default=8765, help="phone mode: port to serve on (default 8765)")
-    p.add_argument("--http", action="store_true", help="phone mode: plain HTTP (typing and keyboard dictation still work)")
-    p.add_argument("--cert", type=Path, help="phone mode: TLS certificate file, e.g. from `tailscale cert`")
-    p.add_argument("--key", type=Path, help="phone mode: TLS private key file for --cert")
-    p.add_argument("--new-token", action="store_true", help="phone mode: new pairing code (unpairs every phone)")
-    p.add_argument(
-        "--confirm",
-        choices=CONFIRM_POLICIES,
-        default="risky",
-        help="ask before: all = every click/keypress, commands and sessions; "
-        "risky = commands and sessions (default); none = never",
-    )
-    p.add_argument("--brain", choices=["local", "claude"], default="local",
-                   help="local = free open model on this computer (default); claude = Anthropic API (paid)")
-    p.add_argument("--local-url", help="use this OpenAI-compatible model server, e.g. http://127.0.0.1:1234")
-    p.add_argument("--local-model", help="model name on the local server (e.g. qwen3:8b for Ollama)")
-    p.add_argument("--model", default=DEFAULT_MODEL, help="Claude model, with --brain claude")
-    p.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
-                   help="Claude effort level, with --brain claude")
-    p.add_argument(
-        "--session-mode",
-        default="acceptEdits",
-        help="permission mode for background Claude Code sessions (acceptEdits, auto, dontAsk, ...)",
-    )
-    p.add_argument("--stt-model", default="base.en", help="faster-whisper model size (tiny.en, base.en, small.en, ...)")
-    p.add_argument("--voice", default="af_heart", help="Kokoro voice name")
+    _add_options(p, top=True)
     sub = p.add_subparsers(dest="cmd")
-    say = sub.add_parser("say", help="speak some text to test the voice")
-    say.add_argument("words", nargs="+")
-    sub.add_parser("listen", help="record one utterance and print the transcript")
-    sub.add_parser("doctor", help="check dependencies, credentials and devices")
-    sub.add_parser("setup", help="get a free model ready for this computer (one time)")
+
+    def command(name: str, help: str) -> argparse.ArgumentParser:
+        c = sub.add_parser(name, help=help, description=help)
+        _add_options(c, top=False)
+        return c
+
+    command("say", "speak some text to test the voice").add_argument("words", nargs="+")
+    command("listen", "record one utterance and print the transcript")
+    command("doctor", "check dependencies, credentials and devices")
+    command("setup", "get a free model ready for this computer (one time)")
+    command("check", "test v end to end with your real model (a short conversation)")
+    command("app", "open v in its own window (and for your phone)").add_argument(
+        "--background", action="store_true", help=argparse.SUPPRESS)
+    command("install-shortcut", "put a v icon on the desktop / in the app menu")
     return p
 
 
@@ -357,97 +373,24 @@ def cmd_run(args) -> int:
 
 
 def cmd_phone(args) -> int:
-    import threading
+    from .serve import run
 
-    from . import phone
-    from .confirm import Confirmer
-    from .speech import Speaker
-    from .ui import TeeUI, TerminalUI
+    return run(_config(args), args, window=False)
 
-    cfg = _config(args)
-    hub, media = phone.Hub(), phone.MediaStore()
 
-    synth = None
-    try:
-        from .speech import KokoroEngine
+def cmd_app(args) -> int:
+    from .serve import app_main
 
-        synth = KokoroEngine(cfg.voice)
-    except Exception as e:
-        print(f"(Kokoro voice unavailable: {e.__class__.__name__}; the phone will use its own voice)")
-    transcriber = None
-    try:
-        from .speech import Transcriber
+    return app_main(_config(args), args)
 
-        print("Loading speech recognition…")
-        transcriber = Transcriber(cfg.stt_model)
-    except Exception as e:
-        print(f"(Whisper unavailable: {e.__class__.__name__}; the phone will use its own speech recognition)")
 
-    voice = phone.PhoneVoice(hub, media, synth)
-    speaker = Speaker(voice)
-    bridge = phone.Bridge(hub, transcriber, say=speaker.say)
+def cmd_install_shortcut(args) -> int:
+    from .desktop import install_shortcut
 
-    computer = _computer(cfg)
-    agent, sessions, brain = _make_brain(
-        cfg, args, say=speaker.say, confirmer=Confirmer(cfg.confirm, bridge.ask),
-        ui=TeeUI(TerminalUI(), phone.PhoneUI(hub, media)), stop_speaking=speaker.stop, computer=computer,
-    )
-    bridge.agent = agent
-
-    ip = phone.lan_ip()
-    ssl_ctx = None
-    scheme = "http"
-    if args.cert or args.key:
-        if not (args.cert and args.key):
-            raise SystemExit("--cert and --key go together")
-        ssl_ctx, scheme = phone.ssl_context(args.cert, args.key), "https"
-    elif not args.http:
-        try:
-            ssl_ctx, scheme = phone.ssl_context(*phone.self_signed_cert(ip)), "https"
-        except ImportError:
-            print("(cryptography not installed, so serving plain HTTP: typing and keyboard dictation work,")
-            print(" the talk button needs HTTPS. `pip install cryptography` to enable it.)")
-
-    token = phone.load_token(new=args.new_token)
-    hello = lambda: {  # noqa: E731
-        "project": cfg.project_dir.name,
-        "goal": cfg.goal,
-        "stt": transcriber is not None,
-        "voice": voice.mode,
-        "computer": computer is not None,
-        "confirm": cfg.confirm,
-        "brain": brain,
-    }
-    try:
-        server = phone.PhoneServer(("0.0.0.0", args.port), hub, media, bridge, token, hello, ssl_ctx)
-    except OSError as e:
-        raise SystemExit(f"Can't listen on port {args.port}: {e}. Try --port with another number.")
-
-    url = f"{scheme}://{ip}:{args.port}/?t={token}"
-    print(f"\nv · {cfg.project_dir}")
-    print(f"brain: {brain}")
-    print(f"goal: {cfg.goal or '(none yet)'}\n")
-    print("Open this on your phone (same Wi-Fi), or scan the code:\n")
-    if not phone.print_qr(url):
-        print("(`pip install qrcode` to show a QR code here)")
-    print(f"\n  {url}\n")
-    if scheme == "https" and not args.cert:
-        print("The first time, your phone warns about the certificate (it's v's own, made on this computer).")
-        print("Tap Show Details / Advanced, then visit the site. Then Share → Add to Home Screen.\n")
-    print("Anyone with this link can control this computer; keep it private. Ctrl+C to stop.\n")
-
-    worker = threading.Thread(target=bridge.run_worker, daemon=True)
-    worker.start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        bridge.stop()
-        _stop_sessions(sessions)
-        server.stopping.set()
-        server.server_close()
-        speaker.close()
+    created = install_shortcut()
+    for path in created:
+        print(f"Created {path}")
+    print("Start v from its icon from now on." if created else "Couldn't find where to put the icon.")
     return 0
 
 
@@ -461,6 +404,14 @@ def main(argv=None) -> int:
         return cmd_doctor(args)
     if args.cmd == "setup":
         return cmd_setup(args)
+    if args.cmd == "app":
+        return cmd_app(args)
+    if args.cmd == "install-shortcut":
+        return cmd_install_shortcut(args)
+    if args.cmd == "check":
+        from .check import run_check
+
+        return run_check(url=args.local_url, model=args.local_model)
     if args.phone:
         return cmd_phone(args)
     return cmd_run(args)

@@ -70,40 +70,65 @@ All of these are open models under the Apache 2.0 license. Apple Silicon Macs an
 
 ## Install
 
-1. **Install [Ollama](https://ollama.com)** (free; one-click installer for Mac, Windows and Linux). v uses it to run the model. *(Optional: without it, v downloads and runs llama.cpp itself through [cheapstack](https://github.com/psaravanansep2/cheapstack).)*
-2. **Install v** (needs Python 3.10+):
-   ```bash
-   pip install "v[all] @ git+https://github.com/psaravanansep2/v"
-   v setup      # picks and downloads the right free model for this computer (one time)
-   v doctor     # shows what's working and what's missing
-   ```
+One step. Nothing to set up first; the installer brings everything v needs,
+and nothing needs an admin password.
+
+**Windows:** download [Install v.cmd](https://github.com/psaravanansep2/v/raw/main/Install%20v.cmd) and double-click it
+(if Windows warns about an unknown publisher, choose *More info* → *Run anyway*). Or paste this into PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/psaravanansep2/v/main/install.ps1 | iex
+```
+
+**Mac and Linux:** paste this into Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/psaravanansep2/v/main/install.sh | sh
+```
+
+The installer gets [uv](https://docs.astral.sh/uv/) (which brings its own
+Python), installs v, downloads the free model that fits your computer (a few
+GB, one time), adds a **v icon** to your apps, and opens v.
+
+Already use [Ollama](https://ollama.com) or LM Studio? v finds them and uses
+their models. For the most natural voice, install with `V_KOKORO=1` in front
+of the command (a bigger download).
 
 Platform notes:
 
-- **macOS:** allow your terminal under System Settings → Privacy & Security → *Accessibility* (mouse and keyboard), *Screen Recording* (seeing the screen) and *Microphone*.
+- **macOS:** the first time v uses the screen, allow it under System Settings → Privacy & Security → *Accessibility* and *Screen Recording*.
 - **Linux:** screen control needs an X11 session.
-- **Python 3.13:** the Kokoro voice isn't available yet, so v uses your computer's built-in voice.
+
+Check that everything works with a short real conversation with your model:
+
+```bash
+v check
+```
 
 ## Use
 
+Click the **v icon**. v opens in its own window: tap the microphone and
+talk, or type. The phone button shows a code to scan with your phone.
+
+From a terminal:
+
 ```bash
-v                                   # talk to it (starts listening when you speak, stops when you pause)
+v app                               # the v window (same as the icon)
+v                                   # talk in the terminal (listens when you speak, stops when you pause)
 v --goal "Plan the move to Lisbon"  # set what you're working toward; v remembers it for this folder
-v --text                            # type instead of talking
-v --phone                           # use your phone instead (see below)
+v --text                            # type in the terminal instead of talking
+v --phone                           # phones only, no window
 ```
 
-- **Interrupt:** Ctrl+C stops what v is doing. Ctrl+C while it's listening quits, and so does saying "goodbye".
+- **Interrupt:** Stop in the window, or Ctrl+C in the terminal. Saying "goodbye" ends a terminal session.
 - **Emergency stop for screen control:** slam the mouse into a screen corner.
 
 ### From your phone (iPhone or Android)
 
-```bash
-v --phone
-```
-
-v prints a QR code. Scan it with your phone's camera (same Wi-Fi as the
-computer) and v opens in the browser: no app to install, no app store.
+In v's window, click the phone button and scan the code with your phone's
+camera (same Wi-Fi as the computer). Or run `v --phone`, which prints the
+code in the terminal. v opens in the phone's browser: no app to install, no
+app store.
 
 - **Talk:** tap the big button and speak.
 - **Watch:** replies appear as they come, with a preview of your computer's screen while v works on it.
@@ -148,7 +173,7 @@ Anything that isn't a clear yes counts as no.
 | Part | What runs it | Where |
 |---|---|---|
 | Listening | Microphone + [faster-whisper](https://github.com/SYSTRAN/faster-whisper) speech recognition | Your computer (or the phone's own) |
-| Speaking | [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) neural voice, sentence by sentence while the reply streams | Your computer (or the phone's own) |
+| Speaking | The browser's or computer's voice, or the [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) neural voice (`V_KOKORO=1`), sentence by sentence while the reply streams | Your computer or phone |
 | Thinking | An open model through Ollama, LM Studio, or llama.cpp via cheapstack | Your computer |
 | Seeing the screen | [RapidOCR](https://github.com/RapidAI/RapidOCR) reads the text on screen; v clicks things by number | Your computer |
 | Web search | DuckDuckGo's plain HTML results | The internet |
@@ -176,7 +201,12 @@ MIT; see [LICENSE](LICENSE).
 ```bash
 pip install -e ".[all,dev]"
 pytest
+v check     # end to end with a real local model
 ```
+
+CI runs the tests on macOS, Windows and Linux, runs both installers, and
+runs `v check` against a real free model (Qwen3 4B) through Ollama and
+through v's own llama.cpp runner.
 
 The tests use fakes for the mic, speakers, screen, OCR, model servers
 (OpenAI-style and Ollama) and the `claude` binary, talking over real HTTP.

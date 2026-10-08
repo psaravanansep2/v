@@ -186,6 +186,7 @@ class Bridge:
         self.say = say
         self.log = log
         self.agent = None
+        self.not_ready = "I'm still getting ready (setting up the free model). Try again in a moment."
         self.inbox: queue.Queue = queue.Queue()
         self._lock = threading.Lock()
         self._pending: Optional[dict] = None
@@ -225,7 +226,7 @@ class Bridge:
             return True
 
     def interrupt(self) -> None:
-        if self.agent is not None:
+        if self.agent is not None and hasattr(self.agent, "cancel"):
             self.agent.cancel()
         with self._lock:
             if self._pending is not None:
@@ -268,6 +269,9 @@ class Bridge:
             kind, payload = self.inbox.get()
             if kind == "stop":
                 return
+            if self.agent is None:
+                self.hub.publish({"type": "notice", "text": self.not_ready})
+                continue
             try:
                 if kind == "audio":
                     self.hub.publish({"type": "busy", "busy": True})
@@ -350,6 +354,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/icon.svg":
             return self._send(200, ICON_SVG, "image/svg+xml")
+        if path == "/health":  # lets a second launch find the running v
+            return self._json(200, {"ok": True, "v": True})
         if not self._token_ok():
             return self._locked_out()
         if path == "/manifest.webmanifest":
@@ -371,6 +377,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _page(), "text/html; charset=utf-8", {"Content-Security-Policy": csp})
         if path == "/events":
             return self._events()
+        if path == "/qr.svg":
+            url = self.server.hello().get("phone_url")
+            svg = qr_svg(url) if url else None
+            if svg is None:
+                return self._json(404, {"error": "no phone link"})
+            return self._send(200, svg, "image/svg+xml")
         if path.startswith("/media/"):
             item = self.server.media.get(path.rsplit("/", 1)[-1])
             if item is None:
@@ -403,6 +415,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/interrupt":
                 bridge.interrupt()
                 return self._json(200, {"ok": True})
+            if path == "/quit" and self.server.on_quit is not None:
+                self._json(200, {"ok": True})
+                threading.Thread(target=self.server.on_quit, daemon=True).start()
+                return
         except (json.JSONDecodeError, RuntimeError) as e:
             return self._json(400, {"error": str(e)})
         self._json(404, {"error": "not found"})
@@ -451,6 +467,7 @@ class PhoneServer(ThreadingHTTPServer):
         self.hello = hello
         self.ssl_context = ssl_context
         self.stopping = threading.Event()
+        self.on_quit: Optional[Callable[[], None]] = None
 
     def finish_request(self, request, client_address):
         # TLS handshake on the per-connection thread, so one slow or broken
@@ -557,6 +574,16 @@ def ssl_context(cert: Path, key: Path) -> ssl.SSLContext:
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(cert, key)
     return ctx
+
+
+def qr_svg(url: str) -> Optional[bytes]:
+    try:
+        import qrcode
+        import qrcode.image.svg
+    except ImportError:
+        return None
+    image = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=2)
+    return image.to_string()
 
 
 def print_qr(url: str) -> bool:

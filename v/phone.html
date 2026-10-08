@@ -88,6 +88,20 @@
   .side svg { width: 22px; height: 22px; }
   .side[hidden] { visibility: hidden; display: grid; }
   #hint { margin: 10px 0 0; text-align: center; font-size: 13px; color: var(--muted); min-height: 1em; }
+  #status { padding: 8px 16px; font-size: 14px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+  #status[hidden] { display: none; }
+  #status.failed { color: var(--danger); }
+  #status .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; flex: none; }
+  #status.failed .spin { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  dialog { border: 0; border-radius: 20px; padding: 24px; background: var(--panel); color: var(--text); max-width: 340px; width: calc(100% - 32px); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog h2 { margin: 0 0 6px; font-size: 18px; }
+  dialog p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+  #qr { display: block; width: 100%; aspect-ratio: 1; background: #fff; border-radius: 12px; padding: 10px; }
+  dialog .row { display: flex; gap: 10px; margin-top: 16px; }
+  dialog button { flex: 1; min-height: 44px; border-radius: 12px; border: 1px solid var(--line); font-weight: 600; }
+  #quit { color: var(--danger); }
   [hidden] { display: none; }
 </style>
 </head>
@@ -98,11 +112,23 @@
     <div class="project" id="project">Connecting…</div>
     <div class="goal" id="goal"></div>
   </div>
+  <button class="icon-btn" id="phoneBtn" aria-label="Use v on your phone" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>
+  </button>
   <button class="icon-btn" id="mute" aria-label="Mute v's voice" aria-pressed="false">
     <svg id="speakerOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
     <svg id="speakerOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m23 9-6 6"/><path d="m17 9 6 6"/></svg>
   </button>
 </header>
+
+<div id="status" hidden><span class="spin" aria-hidden="true"></span><span id="statusText"></span></div>
+
+<dialog id="phoneDialog" aria-labelledby="phoneTitle">
+  <h2 id="phoneTitle">Use v on your phone</h2>
+  <p>Scan with your phone's camera (same Wi-Fi as this computer). The first time, tap through the certificate warning; it's v's own.</p>
+  <img id="qr" alt="QR code that opens v on your phone">
+  <div class="row"><button id="quit" type="button">Quit v</button><button id="closePhone" type="button">Done</button></div>
+</dialog>
 
 <details id="screen" hidden open>
   <summary><span>Your computer's screen</span><span id="screenToggle">tap to hide</span></summary>
@@ -290,8 +316,13 @@
       replaying = true;
       $("project").textContent = e.project ? "v · " + e.project : "v";
       $("goal").textContent = e.goal || "No project goal yet";
+      setStatus(e.ready ? "" : e.status);
+      $("phoneBtn").hidden = !(isLocal && e.phone_url);
       configureMic();
     },
+    status(e) { if (!hello.ready) setStatus(e.text); },
+    ready(e) { hello.ready = true; hello.brain = e.brain; setStatus(""); },
+    setup_failed(e) { setStatus(e.text, true); },
     replay_end() { replaying = false; },
     user(e) { bubble = null; addMsg("you", e.text); },
     text(e) {
@@ -318,6 +349,24 @@
     audio(e) { if (!replaying) playAudio(e.id); },
     speak(e) { if (!replaying) speakText(e.text); },
     stop_audio() { if (!replaying) stopAudio(); },
+  };
+
+  // ---------- this computer's own window: setup progress, phone pairing, quit ----------
+  const isLocal = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+  function setStatus(text, failed = false) {
+    $("status").hidden = !text;
+    $("status").classList.toggle("failed", failed);
+    $("statusText").textContent = text || "";
+  }
+  $("phoneBtn").onclick = () => {
+    $("qr").src = withToken("/qr.svg");
+    $("phoneDialog").showModal();
+  };
+  $("closePhone").onclick = () => $("phoneDialog").close();
+  $("quit").onclick = async () => {
+    await post("/quit", "{}").catch(() => null);
+    $("phoneDialog").close();
+    setStatus("v has stopped. You can close this window.", true);
   };
 
   let source = null;

@@ -63,7 +63,7 @@ MODELS = [
     ModelChoice(
         "Qwen3 30B-A3B",
         "qwen3:30b",
-        ("unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",),
+        ("unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF", "Qwen/Qwen3-30B-A3B-GGUF"),
         "Q4_K_M",
         18.6,
         21,  # fits a 24 GB card: 18.6 GB weights + ~1.6 GB for a 16K context
@@ -72,7 +72,7 @@ MODELS = [
     ModelChoice(
         "gpt-oss 20B",
         "gpt-oss:20b",
-        ("ggml-org/gpt-oss-20b-GGUF",),
+        ("ggml-org/gpt-oss-20b-GGUF", "unsloth/gpt-oss-20b-GGUF"),
         "mxfp4",
         12.1,
         15,
@@ -288,10 +288,11 @@ class LocalClient:
             "model": self.server.model,
             # "name" on tool results is only for Ollama's native format
             "messages": [{k: v for k, v in m.items() if not (m["role"] == "tool" and k == "name")} for m in messages],
-            "tools": tools,
             "stream": True,
             "temperature": 0.3,
         }
+        if tools:  # some servers reject an empty list
+            body["tools"] = tools
         resp = self._open(self.server.base_url + "/chat/completions", body)
         with resp:
             for raw in resp:
@@ -329,10 +330,11 @@ class LocalClient:
         body = {
             "model": self.server.model,
             "messages": native,
-            "tools": tools,
             "stream": True,
             "options": {"num_ctx": CONTEXT_TOKENS, "temperature": 0.3},
         }
+        if tools:
+            body["tools"] = tools
         if "qwen3" in self.server.model.lower():
             body["think"] = False  # answer right away instead of reasoning out loud first
         resp = self._open(self.server.base_url[: -len("/v1")] + "/api/chat", body)
@@ -576,6 +578,8 @@ def ensure_server(log: Callable[[str], None] = print, url: Optional[str] = None,
         if running:
             return running
     choice = choose_model()
+    if model:
+        choice = model_for_tag(model) or choice  # e.g. --local-model qwen3:4b also picks the llama.cpp download
     installed = ollama_models()
     if installed is None and _start_ollama(log):
         installed = ollama_models()

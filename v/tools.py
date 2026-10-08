@@ -443,7 +443,7 @@ class Toolbox:
                 matches.append(p)
                 if len(matches) >= MAX_LISTING:
                     break
-            lines = [str(p.relative_to(root)) for p in sorted(matches)]
+            lines = [p.relative_to(root).as_posix() for p in sorted(matches)]
             return f"{len(lines)} match(es) for {pattern} in {root}:\n" + "\n".join(lines) if lines else f"Nothing matches {pattern} in {root}."
         entries = sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
         lines = []

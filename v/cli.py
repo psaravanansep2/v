@@ -1,0 +1,270 @@
+"""`v` — talk to your computer.
+
+    v                      voice conversation about the project in the current directory
+    v --project ~/code/app --goal "Ship the signup flow by Friday"
+    v --text               type instead of talking (add --speak to still hear replies)
+    v say "hello"          test the voice
+    v listen               test the microphone + speech recognition
+    v doctor               check what's installed and what's missing
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from .config import CONFIRM_POLICIES, DEFAULT_MODEL, Config, load_goal, save_goal
+
+EXIT_PHRASES = {"goodbye", "bye", "exit", "quit", "stop listening", "goodbye v", "bye v"}
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="v", description="Voice assistant for your computer and your project.")
+    p.add_argument("--project", type=Path, default=Path.cwd(), help="project directory (default: current directory)")
+    p.add_argument("--goal", help="overall project goal; saved to <project>/.v/goal.txt for next time")
+    p.add_argument("--text", action="store_true", help="type instead of using the microphone")
+    p.add_argument("--speak", action="store_true", help="in --text mode, still speak replies")
+    p.add_argument("--no-computer", action="store_true", help="don't let v see the screen or use mouse/keyboard")
+    p.add_argument(
+        "--confirm",
+        choices=CONFIRM_POLICIES,
+        default="risky",
+        help="ask before: all = every click/keypress, commands and sessions; "
+        "risky = commands and sessions (default); none = never",
+    )
+    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+    p.add_argument(
+        "--session-mode",
+        default="acceptEdits",
+        help="permission mode for background Claude Code sessions (acceptEdits, auto, dontAsk, ...)",
+    )
+    p.add_argument("--stt-model", default="base.en", help="faster-whisper model size (tiny.en, base.en, small.en, ...)")
+    p.add_argument("--voice", default="af_heart", help="Kokoro voice name")
+    sub = p.add_subparsers(dest="cmd")
+    say = sub.add_parser("say", help="speak some text to test the voice")
+    say.add_argument("words", nargs="+")
+    sub.add_parser("listen", help="record one utterance and print the transcript")
+    sub.add_parser("doctor", help="check dependencies, credentials and devices")
+    return p
+
+
+def _config(args) -> Config:
+    project_dir = args.project.expanduser().resolve()
+    if not project_dir.is_dir():
+        raise SystemExit(f"project directory not found: {project_dir}")
+    if args.goal:
+        save_goal(project_dir, args.goal)
+    return Config(
+        project_dir=project_dir,
+        goal=args.goal or load_goal(project_dir),
+        model=args.model,
+        effort=args.effort,
+        confirm=args.confirm,
+        computer=not args.no_computer,
+        session_permission_mode=args.session_mode,
+        stt_model=args.stt_model,
+        voice=args.voice,
+    )
+
+
+def _has_credentials(client) -> bool:
+    # API key, auth token, or an `ant auth login` profile / workload identity
+    return any(getattr(client, attr, None) is not None for attr in ("api_key", "auth_token", "credentials"))
+
+
+def cmd_say(args) -> int:
+    from .speech import Speaker, make_engine
+
+    speaker = Speaker(make_engine(args.voice))
+    speaker.say(" ".join(args.words))
+    speaker.wait()
+    return 0
+
+
+def cmd_listen(args) -> int:
+    from .speech import Recorder, Transcriber
+
+    print("Loading speech recognition…")
+    transcriber = Transcriber(args.stt_model)
+    print("Listening — say something.")
+    print("you>", transcriber.transcribe(Recorder().record()))
+    return 0
+
+
+def _check(label: str, fn) -> bool:
+    try:
+        detail = fn()
+        print(f"  ok   {label}{f': {detail}' if detail else ''}")
+        return True
+    except Exception as e:
+        print(f"  --   {label}: {e.__class__.__name__}: {e}")
+        return False
+
+
+def cmd_doctor(args) -> int:
+    print("v doctor")
+
+    def creds():
+        import anthropic
+
+        if not _has_credentials(anthropic.Anthropic()):
+            raise RuntimeError("set ANTHROPIC_API_KEY (or log in with `ant auth login`)")
+        return "found"
+
+    def claude_cli():
+        path = shutil.which("claude")
+        if not path:
+            raise RuntimeError("`claude` not on PATH; install Claude Code to use background sessions")
+        return subprocess.run([path, "--version"], capture_output=True, text=True, timeout=20).stdout.strip()
+
+    def imports(*names):
+        def check():
+            for name in names:
+                __import__(name)
+
+        return check
+
+    def screen_control():
+        if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            raise RuntimeError("no DISPLAY set; run v from a desktop session to use screen control")
+        from .computer import import_pyautogui
+
+        gui = import_pyautogui()
+        imports("mss", "PIL")()
+        w, h = gui.size()
+        return f"{w}x{h} display"
+
+    def microphone():
+        import sounddevice as sd
+
+        return sd.query_devices(kind="input")["name"]
+
+    _check("Claude API credentials", creds)
+    _check("Claude Code CLI", claude_cli)
+    _check("speech recognition (faster-whisper)", imports("faster_whisper"))
+    _check("microphone", microphone)
+    if not _check("Kokoro voice", imports("kokoro")):
+        _check("fallback voice (pyttsx3)", imports("pyttsx3"))
+    _check("screen control (pyautogui, mss, pillow)", screen_control)
+    return 0
+
+
+def cmd_run(args) -> int:
+    import anthropic
+
+    from .agent import Agent
+    from .confirm import Confirmer
+    from .sessions import SessionManager
+    from .speech import Speaker, SilentEngine, make_engine
+
+    cfg = _config(args)
+    client = anthropic.Anthropic()
+    if not _has_credentials(client):
+        raise SystemExit(
+            "No Claude API credentials found. Set ANTHROPIC_API_KEY (or log in with `ant auth login`), then run v again."
+        )
+    text_mode = args.text
+    speaker = Speaker(make_engine(cfg.voice) if (not text_mode or args.speak) else SilentEngine())
+
+    recorder = transcriber = None
+    if not text_mode:
+        from .speech import Recorder, Transcriber
+
+        print("Loading speech recognition…")
+        try:
+            transcriber = Transcriber(cfg.stt_model)
+            recorder = Recorder()
+        except Exception as e:
+            raise SystemExit(f"Voice input isn't available ({e.__class__.__name__}: {e}). Try `v doctor` or `v --text`.")
+
+    def hear(prompt: str = "you> ") -> str:
+        if text_mode:
+            return input(prompt).strip()
+        speaker.wait()
+        print("(listening…)", flush=True)
+        text = transcriber.transcribe(recorder.record(paused=speaker.is_speaking))
+        print(f"{prompt}{text}")
+        return text
+
+    def ask(question: str) -> str:
+        print(f"\nv? {question}")
+        speaker.say(question)
+        return hear("(yes/no)> " if text_mode else "you> ")
+
+    computer = None
+    if cfg.computer:
+        try:
+            from .computer import Computer
+
+            computer = Computer()
+        except Exception as e:
+            print(f"(screen control unavailable: {e.__class__.__name__}: {e})")
+
+    sessions = SessionManager(
+        cfg.project_dir,
+        goal=lambda: cfg.goal,
+        permission_mode=cfg.session_permission_mode,
+        claude_bin=cfg.claude_bin,
+    )
+    agent = Agent(
+        client,
+        cfg,
+        say=speaker.say,
+        confirmer=Confirmer(cfg.confirm, ask),
+        computer=computer,
+        sessions=sessions,
+        stop_speaking=speaker.stop,
+    )
+    sessions.on_finish = agent.on_session_finish
+
+    print(f"v · {cfg.project_dir}")
+    print(f"goal: {cfg.goal or '(none yet)'}")
+    print("Ctrl+C interrupts what v is doing; Ctrl+C while it's listening (or saying goodbye) quits.\n")
+    greeting = f"Ready. We're working toward: {cfg.goal}" if cfg.goal else "Ready. What are we working on?"
+    print(f"v> {greeting}")
+    speaker.say(greeting)
+
+    try:
+        while True:
+            try:
+                text = hear()
+            except (KeyboardInterrupt, EOFError):
+                break
+            if not text:
+                continue
+            if text.lower().strip(" .!?,") in EXIT_PHRASES:
+                break
+            print("v> ", end="", flush=True)
+            try:
+                agent.turn(text)
+            except anthropic.AuthenticationError:
+                raise SystemExit("Claude API authentication failed. Set ANTHROPIC_API_KEY and try again.")
+    finally:
+        running = [s for s in sessions.all() if s.status == "running"]
+        if running:
+            print(f"Stopping {len(running)} running session(s); resume them later with `claude --resume`.")
+            sessions.stop_all()
+        speaker.say("Bye.")
+        speaker.wait()
+        speaker.close()
+    return 0
+
+
+def main(argv=None) -> int:
+    args = _parser().parse_args(argv)
+    if args.cmd == "say":
+        return cmd_say(args)
+    if args.cmd == "listen":
+        return cmd_listen(args)
+    if args.cmd == "doctor":
+        return cmd_doctor(args)
+    return cmd_run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

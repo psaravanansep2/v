@@ -177,6 +177,10 @@ _NOT_NAMES = {"infinite", "alternate", "alternate-reverse", "reverse", "normal",
               "initial", "inherit", "unset"}
 
 
+class _Saved(Exception):
+    """A picture was saved as it is (an animated GIF)."""
+
+
 def _external(ref: str) -> bool:
     return bool(re.match(r"^(?:[a-z][a-z0-9+.-]*:|//)", ref, re.I))
 
@@ -658,11 +662,12 @@ class Toolbox:
         title, text = html_to_text(page)
         return f"{title}\n\n{text}" if title else text
 
-    def _image_results(self, query: str, n: int) -> list:
+    def _image_results(self, query: str, n: int, animated: bool = False) -> list:
         """[(url, title, creator, license, page)] from Openverse, or Wikimedia Commons if that fails."""
         q = urllib.parse.quote_plus(query)
+        gif = "&extension=gif" if animated else ""
         try:
-            data = json.loads(self.fetch(f"https://api.openverse.org/v1/images/?q={q}&page_size={n}&mature=false")[0])
+            data = json.loads(self.fetch(f"https://api.openverse.org/v1/images/?q={q}&page_size={n}&mature=false{gif}")[0])
             found = [(r["url"], r.get("title") or query, r.get("creator") or "unknown",
                       f"CC {r.get('license', '').upper()} {r.get('license_version', '')}".strip(),
                       r.get("foreign_landing_url") or r["url"]) for r in data.get("results", []) if r.get("url")]
@@ -670,8 +675,10 @@ class Toolbox:
                 return found
         except (OSError, ValueError, KeyError):
             pass
+        wiki_q = urllib.parse.quote_plus(query + (" filetype:gif" if animated else ""))
         url = ("https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6"
-               f"&gsrlimit={n}&gsrsearch={q}&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=1600")
+               f"&gsrlimit={n}&gsrsearch={wiki_q}&prop=imageinfo&iiprop=url|extmetadata"
+               + ("" if animated else "&iiurlwidth=1600"))  # a resized GIF is a still picture
         pages = json.loads(self.fetch(url)[0]).get("query", {}).get("pages", {})
         found = []
         for page in pages.values():
@@ -689,9 +696,11 @@ class Toolbox:
         if not self._may_write(dest, "Save pictures into"):
             return "The user declined this change."
         dest.mkdir(parents=True, exist_ok=True)
-        slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "photo"
+        animated = bool(re.search(r"\b(gifs?|animat\w*|moving|moves)\b", query, re.I))
+        search = re.sub(r"\b(an? |gifs?|animat\w*|moving|moves)\b", " ", query, flags=re.I).strip() or query
+        slug = re.sub(r"[^a-z0-9]+", "-", search.lower()).strip("-")[:40] or "photo"
         saved, credits = [], []
-        for url, title, creator, license_, page in self._image_results(query, count * 2):
+        for url, title, creator, license_, page in self._image_results(search, count * 2, animated):
             if len(saved) >= count:
                 break
             try:
@@ -701,6 +710,12 @@ class Toolbox:
                     from PIL import Image
 
                     with Image.open(io.BytesIO(data)) as image:
+                        if animated:
+                            if not getattr(image, "is_animated", False):
+                                continue  # asked for an animation: a still picture won't do
+                            name = name[:-4] + ".gif"
+                            (dest / name).write_bytes(data)  # kept as it is: resizing would stop it moving
+                            raise _Saved()
                         image = image.convert("RGB")
                         image.thumbnail((1600, 1600))  # web-sized
                         image.save(dest / name, format="JPEG", quality=85)
@@ -708,17 +723,21 @@ class Toolbox:
                     ext = {"image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}.get(ctype.split(";")[0], ".jpg")
                     name = name[:-4] + ext
                     (dest / name).write_bytes(data)
+            except _Saved:
+                pass
             except Exception:  # a broken or unreachable picture: try the next one
                 continue
             saved.append(name)
             credits.append(f"{name}: “{title}” by {creator}, {license_}" + (f" ({page})" if page else ""))
         if not saved:
-            return f"Couldn't find or download pictures of {query} (check the internet connection)."
+            what = "animations (GIFs)" if animated else "pictures"
+            return f"Couldn't find or download {what} of {search} (check the internet connection)."
         with open(dest / "CREDITS.txt", "a", encoding="utf-8") as f:
             f.write("\n".join(credits) + "\n")
         self.ui.activity(f"saved {len(saved)} pictures of {query} to {dest}")
         where = dest.relative_to(self.cfg.project_dir.resolve()).as_posix() if self._inside_project(dest) else str(dest)
-        return (f"Saved {len(saved)} pictures in {where}: {', '.join(saved)}. Credits (show them on the page, e.g. in the "
+        what = "animated GIFs" if animated else "pictures"
+        return (f"Saved {len(saved)} {what} in {where}: {', '.join(saved)}. Credits (show them on the page, e.g. in the "
                 f"footer): " + "; ".join(credits))
 
     def t_clipboard(self, action: str, text: Optional[str] = None) -> str:

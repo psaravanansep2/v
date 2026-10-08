@@ -20,18 +20,47 @@ STATE_DIR = Path.home() / ".v"
 APP_FILE = STATE_DIR / "app.json"
 
 
-def running_app_url() -> str | None:
-    """The window address of a v app that's already running, if any."""
+def _opener():
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))  # this computer only: never a proxy
+
+
+def running_app() -> dict | None:
+    """The v app that's already running, if any: {"url": its window address, "build": its code's fingerprint}."""
     try:
         info = json.loads(APP_FILE.read_text(encoding="utf-8"))
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
-            info["local_url"].split("?")[0] + "health", timeout=1.5
-        ) as resp:
-            if json.load(resp).get("v"):
-                return info["local_url"]
+        with _opener().open(info["local_url"].split("?")[0] + "health", timeout=1.5) as resp:
+            health = json.load(resp)
+        if health.get("v"):
+            return {"url": info["local_url"], "build": health.get("build", "")}
     except (OSError, ValueError, KeyError):
         pass
     return None
+
+
+def running_app_url() -> str | None:
+    found = running_app()
+    return found["url"] if found else None
+
+
+def stop_running_app(found: dict, wait_s: float = 15) -> bool:
+    """Ask a running v to quit (it has the same pairing token in its address), and wait until it has."""
+    import time
+    from urllib.parse import parse_qs, urlsplit
+
+    url = found["url"]
+    token = (parse_qs(urlsplit(url).query).get("t") or [""])[0]
+    req = urllib.request.Request(url.split("?")[0] + "quit", data=b"{}", method="POST",
+                                 headers={"X-V-Token": token, "Content-Type": "application/json"})
+    try:
+        _opener().open(req, timeout=3).read()
+    except OSError:
+        return False
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        if running_app() is None:
+            return True
+        time.sleep(0.25)
+    return False
 
 
 def run(cfg: Config, args, window: bool) -> int:
@@ -214,13 +243,21 @@ def run(cfg: Config, args, window: bool) -> int:
 
 
 def app_main(cfg: Config, args) -> int:
-    """`v app`: reuse a running v (just show its window), or start one."""
-    url = running_app_url()
-    if url:
+    """`v app`: reuse a running v (just show its window), or start one. A running v from before an
+    update is replaced, so the update takes effect without the user having to quit it first."""
+    from . import build_id
+
+    found = running_app()
+    if found and found["build"] == build_id():
         from .desktop import open_window
 
-        open_window(url)
+        open_window(found["url"])
         return 0
+    if found:
+        print("v was updated: restarting it with the new version…", flush=True)
+        if not stop_running_app(found):
+            print("(The old v didn't stop; quit it from its window, then open v again.)", flush=True)
+            return 1
     if args.background or sys.stdout is None:
         # started from the icon: no terminal, so keep a log instead
         STATE_DIR.mkdir(parents=True, exist_ok=True)

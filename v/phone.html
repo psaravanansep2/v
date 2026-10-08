@@ -358,6 +358,7 @@
   let busy = false;
   let muted = store.get("v-muted") === "1";
   let skew = 0;           // this device's clock minus the computer's, for countdowns
+  let pageBuild = "";     // the v version this page came from
 
   // ---------- conversation ----------
   const log = $("log");
@@ -619,6 +620,8 @@
 
   const handlers = {
     hello(e) {
+      if (e.build && pageBuild && e.build !== pageBuild) { location.reload(); return; }  // v was updated: get the new page
+      pageBuild = pageBuild || e.build;
       hello = e;
       if (e.now) {
         const drift = Date.now() - e.now;

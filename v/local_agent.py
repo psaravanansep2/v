@@ -154,6 +154,7 @@ def system_prompt(cfg: Config, has_screen: bool, suffix: str = "") -> str:
             "- Ask at most one short question before starting; if details are missing, pick sensible ones and say what "
             "you chose.",
             "- If the user says something you made doesn't work, read your files to find out why and fix it.",
+            "- You can't see pictures; read_file only gives the words in them. Don't guess what a picture shows.",
             "- If a tool result says the user declined, don't try again; ask what they'd like instead.",
             f"Project folder: {cfg.project_dir}",
             f"Project goal: {goal}",

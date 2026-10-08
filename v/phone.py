@@ -312,7 +312,11 @@ def with_attachments(text: str, files) -> str:
     files = list(files)
     ask = text or ("Take a look at this file." if len(files) == 1 else "Take a look at these files.")
     listing = "\n".join(f"- {f}" for f in files)
-    return f"{ask}\n\nAttached (saved on this computer):\n{listing}"
+    pictures = any(str(f).lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".bmp")) for f in files)
+    note = ("\nA picture may be a screenshot of something the user is pointing out (like what they see on screen), "
+            "not something to put in their work unless they say so. You can't see pictures: read_file gives the "
+            "words in them. If you need to know what one shows, ask.") if pictures else ""
+    return f"{ask}\n\nThe user attached (copies saved on this computer):\n{listing}{note}"
 
 
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
@@ -398,8 +402,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/icon.svg":
             return self._send(200, ICON_SVG, "image/svg+xml")
-        if path == "/health":  # lets a second launch find the running v
-            return self._json(200, {"ok": True, "v": True})
+        if path == "/health":  # lets a second launch find the running v, and see if it's out of date
+            from . import build_id
+
+            return self._json(200, {"ok": True, "v": True, "build": build_id()})
         if not self._token_ok():
             return self._locked_out()
         if path == "/manifest.webmanifest":
@@ -496,7 +502,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            send({"type": "hello", **self.server.hello(), "now": round(time.time() * 1000)})  # lets the page correct for clock drift
+            from . import build_id
+
+            # "now" lets the page correct for clock drift; "build" lets an open page reload after an update
+            send({"type": "hello", **self.server.hello(), "now": round(time.time() * 1000), "build": build_id()})
             for event in history:
                 send({**event, "replay": True})
             send({"type": "replay_end"})

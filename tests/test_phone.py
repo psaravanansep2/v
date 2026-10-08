@@ -361,3 +361,44 @@ def test_timers_and_activity_reach_the_page():
     ui.activity("opened Spotify")
     event = q.get_nowait()
     assert event["text"] == "opened Spotify" and abs(event["at"] - time.time() * 1000) < 5000
+
+
+def test_an_updated_v_replaces_the_old_one_still_running(tmp_path, monkeypatch):
+    """After an update, opening v must not just show the old version's window."""
+    from v import build_id, serve
+
+    hub, media = phone.Hub(), phone.MediaStore()
+    srv = phone.PhoneServer(("127.0.0.1", 0), hub, media, phone.Bridge(hub, log=lambda *a: None), TOKEN, lambda: {})
+    quits = []
+
+    def quit_now():
+        quits.append(True)
+        srv.shutdown()
+        srv.server_close()
+
+    srv.on_quit = quit_now
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/?t={TOKEN}"
+    app_file = tmp_path / "app.json"
+    app_file.write_text(json.dumps({"local_url": url}))
+    monkeypatch.setattr(serve, "APP_FILE", app_file)
+    assert serve.running_app() == {"url": url, "build": build_id()}
+
+    opened, started = [], []
+    monkeypatch.setattr("v.desktop.open_window", opened.append)
+    monkeypatch.setattr(serve, "run", lambda cfg, args, window: started.append(window) or 0)
+    args = type("A", (), {"background": False})()
+    assert serve.app_main(None, args) == 0  # same version: just show its window
+    assert opened == [url] and not quits and not started
+
+    real = serve.running_app
+    monkeypatch.setattr(serve, "running_app", lambda: (lambda f: f and {**f, "build": "older"})(real()))
+    assert serve.app_main(None, args) == 0  # older version running: it's asked to quit, then the new one starts
+    assert quits == [True] and started == [True]
+
+
+def test_pictures_attached_are_explained_to_the_model():
+    told = phone.with_attachments("this is not a pizza", ["/home/sam/.v/inbox/image.png"])
+    assert told.startswith("this is not a pizza")
+    assert "screenshot of something the user is pointing out" in told and "can't see pictures" in told
+    assert "can't see" not in phone.with_attachments("summarize", ["/x/report.pdf"])

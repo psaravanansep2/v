@@ -87,6 +87,29 @@ jobs:
         if: failure()
         run: tail -60 serve.log || true
 
+  gpt-oss:
+    name: v eval with gpt-oss 20B (what v picks for many 16-32 GB computers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Make room for the 12 GB model
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - run: python -m pip install -e ".[free,local]"
+      - name: v eval through v's own llama.cpp runner (a measurement, not a pass/fail gate)
+        timeout-minutes: 90
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: v eval --local-model gpt-oss:20b --families site,write,edit,read,question,refuse --json eval-gpt-oss-20b.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-gpt-oss-20b
+          path: eval-gpt-oss-20b.json
+
   installer:
     name: installer (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

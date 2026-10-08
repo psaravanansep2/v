@@ -304,6 +304,17 @@ class StreamAccumulator:
         return msg
 
 
+def template_switches(model: str) -> dict:
+    """Settings the model's own chat template takes. gpt-oss reads its reasoning effort only from here
+    (written into the instructions, "Reasoning: low" is just text to it); Qwen3 can skip its thinking."""
+    name = model.lower()
+    if "gpt-oss" in name:
+        return {"reasoning_effort": "low"}
+    if "qwen3" in name:
+        return {"enable_thinking": False}
+    return {}
+
+
 class LocalClient:
     def __init__(self, server: LocalServer, timeout: float = 600):
         self.server = server
@@ -347,6 +358,10 @@ class LocalClient:
         }
         if tools:  # some servers reject an empty list
             body["tools"] = tools
+        if self.server.kind == "llama.cpp":  # v's own runner: switches its chat templates understand
+            kwargs = template_switches(self.server.model)
+            if kwargs:
+                body["chat_template_kwargs"] = kwargs
         resp = self._open(self.server.base_url + "/chat/completions", body)
         with resp:
             for raw in resp:
@@ -395,8 +410,11 @@ class LocalClient:
         }
         if tools:
             body["tools"] = tools
-        if "qwen3" in self.server.model.lower():
+        name = self.server.model.lower()
+        if "qwen3" in name:
             body["think"] = False  # answer right away instead of reasoning out loud first
+        elif "gpt-oss" in name:
+            body["think"] = "low"  # gpt-oss always reasons; keep it short
         resp = self._open(self.server.base_url[: -len("/v1")] + "/api/chat", body)
         count = thinking = 0
         with resp:

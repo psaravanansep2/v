@@ -456,3 +456,18 @@ def test_the_model_is_told_it_can_build_and_should_open_its_work(tmp_path):
     prompt = system_prompt(Config(project_dir=tmp_path), True)
     assert "You can build things" in prompt and "open what you made" in prompt and "get_images" in prompt
     assert "at most one short question" in prompt and "read your files" in prompt
+
+
+def test_reasoning_settings_reach_the_model_the_way_it_reads_them(tmp_path, server):
+    # v's own llama.cpp runner: gpt-oss takes its reasoning effort as a chat-template setting
+    srv = server([text_chunks("Hi."), text_chunks("Hi.")])
+    for model in ("gpt-oss-20b", "my-tuned-model"):
+        client = LocalClient(LocalServer(srv.url + "/v1", model, "llama.cpp"))
+        list(client.stream_chat([{"role": "user", "content": "hi"}], []))
+    assert srv.requests[0]["body"]["chat_template_kwargs"] == {"reasoning_effort": "low"}
+    assert "chat_template_kwargs" not in srv.requests[1]["body"]
+    assert local.template_switches("qwen3-8b") == {"enable_thinking": False}
+    # Ollama: gpt-oss takes a reasoning level as "think"
+    olla = server([[{"message": {"role": "assistant", "content": "Hi."}, "done": True}]], tags=["gpt-oss:20b"])
+    list(LocalClient(LocalServer(olla.url + "/v1", "gpt-oss:20b", "ollama")).stream_chat([{"role": "user", "content": "hi"}], []))
+    assert olla.requests[0]["body"]["think"] == "low"

@@ -383,3 +383,33 @@ def test_pictures_fall_back_to_wikimedia(tmp_path):
     assert "Saved 1 pictures in images: pizza-1.jpg" in out and "“Pizza.jpg” by Cara, CC BY-SA 4.0" in out
     tb.download = lambda url: (_ for _ in ()).throw(OSError("offline"))
     assert "Couldn't find or download pictures" in tb.run("get_images", {"query": "pasta"})
+
+
+def _gif(frames=3):
+    import io
+
+    buf = io.BytesIO()
+    images = [Image.new("RGB", (64, 64), c) for c in ("red", "green", "blue")[:frames]]
+    images[0].save(buf, format="GIF", save_all=frames > 1, append_images=images[1:], duration=100, loop=0)
+    return buf.getvalue()
+
+
+def test_animations_stay_animated(tmp_path):
+    import json as _json
+
+    asked = []
+
+    def fetch(url):
+        asked.append(url)
+        return _json.dumps({"results": [
+            {"url": "https://img.example/still.gif", "title": "Still", "creator": "A", "license": "by"},
+            {"url": "https://img.example/spin.gif", "title": "Spinning pizza", "creator": "B", "license": "by-sa",
+             "license_version": "4.0"}]}), "application/json"
+
+    tb = toolbox(tmp_path, fetch=fetch)
+    tb.download = lambda url: (_gif(1) if "still" in url else _gif(3), "image/gif")
+    out = tb.run("get_images", {"query": "animated pizza gif", "folder": "site/images", "count": 1})
+    assert "extension=gif" in asked[0] and "q=pizza" in asked[0]
+    assert out.startswith("Saved 1 animated GIFs in site/images: pizza-1.gif.") and "Spinning pizza" in out
+    with Image.open(tmp_path / "project" / "site" / "images" / "pizza-1.gif") as image:
+        assert image.is_animated  # still moving: saved as it was

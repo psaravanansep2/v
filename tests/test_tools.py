@@ -98,6 +98,12 @@ def test_open_and_goal(tmp_path):
     tb = toolbox(tmp_path)
     assert tb.run("open", {"target": "https://example.com"}) == "Opened https://example.com."
     assert tb.opened == ["https://example.com"]
+    (tmp_path / "project" / "docs").mkdir()
+    (tmp_path / "project" / "docs" / "report.pdf").write_bytes(b"%PDF")
+    tb.run("open", {"target": "docs/report.pdf"})
+    assert tb.opened[-1] == str((tmp_path / "project" / "docs" / "report.pdf").resolve())  # not relative to where v started
+    tb.run("open", {"target": "Spotify"})
+    assert tb.opened[-1] == "Spotify"  # an app name stays a name
     tb.run("set_project_goal", {"goal": "Tidy my downloads"})
     assert load_goal(tb.cfg.project_dir) == "Tidy my downloads"
 

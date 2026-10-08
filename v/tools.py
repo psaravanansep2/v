@@ -551,6 +551,10 @@ class Toolbox:
         return f"Edited {p}."
 
     def t_open(self, target: str) -> str:
+        if not target.startswith(("http://", "https://")):
+            path = self._path(target)
+            if path.exists():  # "documents/report.pdf" means the one in the project, wherever v was started
+                target = str(path)
         self.opener(target)
         self.ui.activity(f"opened {target}")
         return f"Opened {target}."

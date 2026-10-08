@@ -109,6 +109,12 @@ Check that everything works with a short real conversation with your model:
 v check
 ```
 
+To see how well your model handles everyday jobs (finding and reading files,
+editing, reading photos, answering from the web, clicking and filling in
+forms on screen, taking no for an answer), `v eval` runs 15 kinds of tasks
+in a scratch folder with a pretend web and screen, and scores them. Use the
+same `--seed` to compare models fairly: `v eval --local-model qwen3:8b`.
+
 ## Use
 
 Click the **v icon**. v opens in its own window. The window and your phone

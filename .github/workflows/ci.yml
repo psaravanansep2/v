@@ -114,6 +114,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: v check --local-model qwen3:4b
+      - name: v eval with a real model (everyday tasks; a measurement, not a pass/fail gate)
+        if: matrix.runner == 'ollama'
+        run: v eval --local-model qwen3:4b --json eval-qwen3-4b.json
+      - uses: actions/upload-artifact@v4
+        if: matrix.runner == 'ollama'
+        with:
+          name: eval-qwen3-4b
+          path: eval-qwen3-4b.json
       - name: llama.cpp can keep a big model's experts in RAM (--cpu-moe)
         if: matrix.runner == 'llama.cpp'
         run: |

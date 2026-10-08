@@ -81,6 +81,12 @@ def _parser() -> argparse.ArgumentParser:
     command("app", "open v in its own window (and for your phone)").add_argument(
         "--background", action="store_true", help=argparse.SUPPRESS)
     command("install-shortcut", "put a v icon on the desktop / in the app menu")
+    ev = command("eval", "score a model on everyday tasks with v's real tools (files, web, screen, ...)")
+    ev.add_argument("--families", help="comma-separated kinds of task (default: all): " + "read, find, write, edit, docx, "
+                    "photo, count, web, click, form, goal, open, refuse, question, todo")
+    ev.add_argument("--per-family", type=int, default=1, help="tasks of each kind (default 1)")
+    ev.add_argument("--seed", type=int, default=2026, help="same seed, same tasks: compare models fairly")
+    ev.add_argument("--json", dest="json_path", help="also write the results here")
     return p
 
 
@@ -413,6 +419,15 @@ def main(argv=None) -> int:
         return cmd_app(args)
     if args.cmd == "install-shortcut":
         return cmd_install_shortcut(args)
+    if args.cmd == "eval":
+        from .evals import FAMILIES, run_eval
+
+        families = [f.strip() for f in args.families.split(",")] if args.families else None
+        unknown = [f for f in families or [] if f not in FAMILIES]
+        if unknown:
+            raise SystemExit(f"unknown task kinds: {', '.join(unknown)}; choose from {', '.join(FAMILIES)}")
+        return run_eval(url=args.local_url, model=args.local_model, families=families, per_family=args.per_family,
+                        seed=args.seed, json_path=args.json_path, log=lambda line: print(line, flush=True))
     if args.cmd == "check":
         from .check import run_check
 

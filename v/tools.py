@@ -255,6 +255,89 @@ def open_with_system(target: str) -> None:
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+# Small models often get a tool's name or argument names slightly wrong.
+# Rather than fail, v maps the common variants to what was meant.
+TOOL_ALIASES = {
+    "open_app": "open", "open_application": "open", "launch_app": "open", "launch": "open", "start_app": "open",
+    "open_url": "open", "open_website": "open", "open_webpage": "open", "open_file": "open", "open_folder": "open",
+    "search": "web_search", "search_web": "web_search", "google": "web_search", "internet_search": "web_search",
+    "websearch": "web_search", "search_internet": "web_search", "search_online": "web_search",
+    "fetch_url": "read_webpage", "browse": "read_webpage", "get_webpage": "read_webpage", "read_url": "read_webpage",
+    "fetch": "read_webpage", "fetch_webpage": "read_webpage", "get_url": "read_webpage",
+    "shell": "run_command", "bash": "run_command", "execute": "run_command", "run": "run_command",
+    "terminal": "run_command", "exec": "run_command", "run_shell": "run_command", "execute_command": "run_command",
+    "ls": "list_files", "list_dir": "list_files", "list_directory": "list_files", "find_files": "list_files",
+    "search_files": "list_files", "glob": "list_files", "find_file": "list_files",
+    "cat": "read_file", "read": "read_file", "read_document": "read_file", "view_file": "read_file",
+    "create_file": "write_file", "save_file": "write_file", "write": "write_file",
+    "replace_in_file": "edit_file", "modify_file": "edit_file", "update_file": "edit_file",
+    "screenshot": "look_at_screen", "take_screenshot": "look_at_screen", "see_screen": "look_at_screen",
+    "read_screen": "look_at_screen", "get_screen": "look_at_screen", "view_screen": "look_at_screen",
+    "type": "type_text", "write_text": "type_text", "keyboard_type": "type_text", "input_text": "type_text",
+    "press_key": "press_keys", "key": "press_keys", "hotkey": "press_keys", "keypress": "press_keys",
+    "mouse_click": "click", "left_click": "click", "double_click": "click", "right_click": "click",
+    "copy_to_clipboard": "clipboard", "set_clipboard": "clipboard", "read_clipboard": "clipboard", "get_clipboard": "clipboard",
+    "set_goal": "set_project_goal",
+}
+# arguments a wrong name implies, e.g. double_click -> double=True
+NAME_DEFAULTS = {
+    "double_click": {"double": True}, "right_click": {"button": "right"},
+    "copy_to_clipboard": {"action": "write"}, "set_clipboard": {"action": "write"},
+    "read_clipboard": {"action": "read"}, "get_clipboard": {"action": "read"},
+}
+ARG_ALIASES = {
+    "open": {"app": "target", "app_name": "target", "application": "target", "url": "target", "name": "target",
+             "path": "target", "file": "target", "website": "target", "folder": "target"},
+    "web_search": {"q": "query", "search": "query", "search_query": "query", "text": "query", "term": "query", "keywords": "query"},
+    "read_webpage": {"link": "url", "address": "url", "page": "url", "website": "url"},
+    "run_command": {"cmd": "command", "shell": "command", "script": "command", "code": "command"},
+    "list_files": {"directory": "path", "dir": "path", "folder": "path", "glob": "pattern", "query": "pattern", "name": "pattern"},
+    "read_file": {"file": "path", "filename": "path", "file_path": "path", "filepath": "path", "name": "path"},
+    "write_file": {"file": "path", "filename": "path", "file_path": "path", "text": "content", "contents": "content", "data": "content"},
+    "edit_file": {"file": "path", "file_path": "path", "filename": "path", "old": "old_text", "new": "new_text", "find": "old_text",
+                  "replace": "new_text", "old_string": "old_text", "new_string": "new_text", "search": "old_text", "replacement": "new_text"},
+    "type_text": {"content": "text", "value": "text", "string": "text"},
+    "press_keys": {"key": "keys", "combo": "keys", "shortcut": "keys", "hotkey": "keys", "text": "keys"},
+    "click": {"id": "element", "element_id": "element", "number": "element", "index": "element", "target": "element"},
+    "scroll": {"amount_lines": "amount", "clicks": "amount", "dir": "direction"},
+    "clipboard": {"content": "text", "value": "text", "mode": "action"},
+    "set_project_goal": {"text": "goal", "project_goal": "goal"},
+}
+
+
+def resolve_call(name: str, args: dict, known: set) -> tuple[str, dict]:
+    """The intended tool and arguments for a possibly-misnamed call."""
+    original = name
+    name = name.strip()
+    if name not in known:
+        name = TOOL_ALIASES.get(name.lower().replace("-", "_").replace(" ", "_"), name)
+    fixed = dict(NAME_DEFAULTS.get(original.lower(), {}))
+    aliases = ARG_ALIASES.get(name, {})
+    for key, value in args.items():
+        fixed[aliases.get(key, key)] = value
+    return name, fixed
+
+
+def _coerce(handler, args: dict) -> dict:
+    """Drop arguments the tool doesn't take; turn "3" into 3 and "true" into True where a number or flag is expected."""
+    import inspect
+
+    params = inspect.signature(handler).parameters
+    out = {}
+    for key, value in args.items():
+        if key not in params:
+            continue
+        annotation = str(params[key].annotation)
+        if isinstance(value, str) and "int" in annotation and re.fullmatch(r"-?\d+", value.strip()):
+            value = int(value)
+        elif isinstance(value, str) and "bool" in annotation and value.strip().lower() in ("true", "false", "yes", "no"):
+            value = value.strip().lower() in ("true", "yes")
+        elif isinstance(value, float) and "int" in annotation and value.is_integer():
+            value = int(value)
+        out[key] = value
+    return out
+
+
 class Toolbox:
     def __init__(self, cfg: Config, confirmer: Confirmer, ui, screen: Optional[Screen] = None,
                  opener: Callable[[str], None] = open_with_system, fetch=_http_get):
@@ -324,12 +407,16 @@ class Toolbox:
 
     # --- dispatch ---
 
+    def names(self) -> set:
+        return {t["function"]["name"] for t in self.definitions()}
+
     def run(self, name: str, args: dict) -> str:
+        name, args = resolve_call(name, args, self.names())
         handler = getattr(self, f"t_{name}", None)
         if handler is None or (self.screen is None and name in ("look_at_screen", "click", "type_text", "press_keys", "scroll")):
-            return f"Error: there is no tool named {name}."
+            return f"Error: there is no tool named {name}. Available: {', '.join(sorted(self.names()))}."
         try:
-            return _clip(handler(**args))
+            return _clip(handler(**_coerce(handler, args)))
         except TypeError as e:
             return f"Error: wrong arguments for {name}: {e}"
         except Exception as e:

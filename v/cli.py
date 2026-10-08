@@ -94,6 +94,20 @@ def _has_credentials(client) -> bool:
 
 
 def _make_brain(cfg: Config, args, *, say, confirmer, ui, stop_speaking, computer, log=print):
+    """Instant commands in front of the agent for the chosen brain, plus
+    Claude Code sessions (Claude only)."""
+    agent, sessions, label = _make_agent(cfg, args, say=say, confirmer=confirmer, ui=ui, stop_speaking=stop_speaking,
+                                         computer=computer, log=log)
+    from .assistant import Assistant
+    from .quick import QuickCommands
+
+    quick = QuickCommands(say, ui, stop_speaking,
+                          gui=computer.gui if computer is not None else None,
+                          grab=computer.grab if computer is not None else None)
+    return Assistant(agent, quick, ui, say), sessions, label
+
+
+def _make_agent(cfg: Config, args, *, say, confirmer, ui, stop_speaking, computer, log=print):
     """The agent for the chosen brain, plus Claude Code sessions (Claude only)."""
     if cfg.brain == "claude":
         import anthropic
@@ -313,7 +327,7 @@ def cmd_run(args) -> int:
     print(f"v · {cfg.project_dir}")
     print(f"brain: {brain}")
     print(f"goal: {cfg.goal or '(none yet)'}")
-    print("Ctrl+C interrupts what v is doing; Ctrl+C while it's listening (or saying goodbye) quits.\n")
+    print("Say \"what can you do\" for ideas. Ctrl+C interrupts v; Ctrl+C while it's listening (or \"goodbye\") quits.\n")
     greeting = f"Ready. We're working toward: {cfg.goal}" if cfg.goal else "Ready. What can I do for you?"
     print(f"v> {greeting}")
     speaker.say(greeting)

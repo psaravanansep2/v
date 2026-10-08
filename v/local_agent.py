@@ -8,6 +8,7 @@ write before answering.
 
 from __future__ import annotations
 
+import json
 import platform
 import re
 import threading
@@ -22,7 +23,7 @@ from .ui import Interrupted, TerminalUI
 
 HISTORY_CHARS = 30_000  # ~8K tokens of conversation, leaving room for tools and the reply
 
-_THINK = re.compile(r"<think>.*?(</think>|$)", re.S)
+_HIDDEN = re.compile(r"<(think|tool_call)>.*?(</\1>|$)", re.S)
 
 
 def _partial_suffix(text: str, tag: str) -> int:
@@ -34,41 +35,100 @@ def _partial_suffix(text: str, tag: str) -> int:
 
 
 class ThinkFilter:
-    """Drops <think>…</think> sections from streamed text."""
+    """Drops <think>…</think> and <tool_call>…</tool_call> sections from
+    streamed text, so reasoning and tool calls written as text are never
+    shown or spoken."""
+
+    TAGS = ("think", "tool_call")
 
     def __init__(self):
         self.buf = ""
-        self.inside = False
+        self.inside: str = ""  # the tag we're inside, if any
 
     def feed(self, text: str) -> str:
         self.buf += text
         out = []
         while self.buf:
             if self.inside:
-                end = self.buf.find("</think>")
+                close = f"</{self.inside}>"
+                end = self.buf.find(close)
                 if end == -1:
-                    keep = _partial_suffix(self.buf, "</think>")
+                    keep = _partial_suffix(self.buf, close)
                     self.buf = self.buf[len(self.buf) - keep:] if keep else ""
                     break
-                self.buf = self.buf[end + len("</think>"):]
-                self.inside = False
+                self.buf = self.buf[end + len(close):]
+                self.inside = ""
             else:
-                start = self.buf.find("<think>")
-                if start == -1:
-                    keep = _partial_suffix(self.buf, "<think>")
+                starts = [(self.buf.find(f"<{t}>"), t) for t in self.TAGS]
+                starts = [(i, t) for i, t in starts if i != -1]
+                if not starts:
+                    keep = max(_partial_suffix(self.buf, f"<{t}>") for t in self.TAGS)
                     out.append(self.buf[: len(self.buf) - keep])
                     self.buf = self.buf[len(self.buf) - keep:]
                     break
+                start, tag = min(starts)
                 out.append(self.buf[:start])
-                self.buf = self.buf[start + len("<think>"):]
-                self.inside = True
+                self.buf = self.buf[start + len(tag) + 2:]
+                self.inside = tag
         return "".join(out)
 
     def flush(self) -> str:
         rest = "" if self.inside else self.buf
         self.buf = ""
-        self.inside = False
+        self.inside = ""
         return rest
+
+
+def _json_objects(text: str) -> list:
+    """Every top-level JSON value in text (handles ```json fences and several objects)."""
+    decoder = json.JSONDecoder()
+    found, i = [], 0
+    text = re.sub(r"```(?:json)?", "", text)
+    while i < len(text):
+        brace = min((j for j in (text.find("{", i), text.find("[", i)) if j != -1), default=-1)
+        if brace == -1:
+            break
+        try:
+            value, end = decoder.raw_decode(text, brace)
+        except json.JSONDecodeError:
+            i = brace + 1
+            continue
+        found.append(value)
+        i = end
+    return found
+
+
+def text_tool_calls(content: str, known: Callable[[str], bool]) -> tuple[list[dict], str]:
+    """Tool calls a model wrote as text instead of real tool calls: Hermes/Qwen
+    <tool_call> tags, or a bare JSON object like {"name": ..., "arguments": ...}.
+    Returns (calls in OpenAI format, the remaining text)."""
+    blocks = re.findall(r"<tool_call>(.*?)(?:</tool_call>|$)", content, re.S)
+    rest = re.sub(r"<tool_call>.*?(</tool_call>|$)", "", content, flags=re.S)
+    candidates = []
+    for block in blocks:
+        candidates += _json_objects(block)
+    if not blocks and rest.lstrip().startswith(("{", "[", "```")):
+        candidates = _json_objects(rest)
+        if candidates:
+            rest = ""
+    calls = []
+    for value in candidates:
+        for obj in value if isinstance(value, list) else [value]:
+            if not isinstance(obj, dict):
+                continue
+            fn = obj.get("function") if isinstance(obj.get("function"), dict) else obj
+            name = fn.get("name") or fn.get("tool") or (obj.get("function") if isinstance(obj.get("function"), str) else None)
+            args = next((fn[k] for k in ("arguments", "parameters", "args", "input") if k in fn), {})
+            if not isinstance(name, str) or not known(name):
+                continue
+            calls.append({
+                "id": f"text_call_{len(calls)}",
+                "type": "function",
+                "function": {"name": name, "arguments": args if isinstance(args, str) else json.dumps(args)},
+            })
+    if not calls:
+        return [], content
+    return calls, rest.strip()
 
 
 def system_prompt(cfg: Config, has_screen: bool, suffix: str = "") -> str:
@@ -124,6 +184,10 @@ class LocalAgent:
 
     def on_session_finish(self, session) -> None:  # the free brain has no background sessions
         pass
+
+    def remember(self, user_text: str, reply: str) -> None:
+        """Record an exchange handled without the model (an instant command)."""
+        self.history += [{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}]
 
     def _check_cancel(self) -> None:
         if self._cancel.is_set():
@@ -192,14 +256,22 @@ class LocalAgent:
     def _stream_once(self):
         acc, think, chunker = StreamAccumulator(), ThinkFilter(), SentenceChunker()
         printed = False
+        held = ""  # text that starts like JSON: maybe a tool call written as text, so don't speak it yet
+        holding = None  # decided on the first visible character
 
         def show(text: str) -> None:
-            nonlocal printed
-            if text:
-                self.ui.text(text)
-                printed = True
-                for sentence in chunker.feed(text):
-                    self.say(sentence)
+            nonlocal printed, held, holding
+            if not text:
+                return
+            if holding is None and text.strip():
+                holding = text.lstrip()[:1] in ("{", "[", "`")
+            if holding:
+                held += text
+                return
+            self.ui.text(text)
+            printed = True
+            for sentence in chunker.feed(text):
+                self.say(sentence)
 
         try:
             for chunk in self.client.stream_chat(self._messages(), self.tools):
@@ -210,13 +282,28 @@ class LocalAgent:
             self.ui.error(str(e))
             self.say("My local model isn't responding. Check that it's still running on the computer.")
             return None
+        msg = acc.message()
+        content = msg["content"]
+        if not msg.get("tool_calls"):
+            calls, content = text_tool_calls(content, self._is_tool)
+            if calls:
+                msg["tool_calls"] = calls
+                held = ""
+        if held:  # it was ordinary text after all
+            holding = False
+            show(held)
         for sentence in chunker.flush():
             self.say(sentence)
         if printed:
             self.ui.text_end()
-        msg = acc.message()
-        msg["content"] = _THINK.sub("", msg["content"]).strip()
+        msg["content"] = _HIDDEN.sub("", content).strip()
         return msg
+
+    def _is_tool(self, name: str) -> bool:
+        from .tools import resolve_call
+
+        known = self.toolbox.names()
+        return resolve_call(name, {}, known)[0] in known
 
     def _close_dangling(self) -> None:
         """Answer tool calls left without results, so the history stays valid."""

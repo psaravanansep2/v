@@ -144,8 +144,8 @@ def test_errors_come_back_as_text(tmp_path):
     tb = toolbox(tmp_path)
     assert tb.run("read_file", {"path": "missing.txt"}).startswith("Error: FileNotFoundError")
     assert tb.run("read_file", {"nope": 1}).startswith("Error: wrong arguments")
-    assert tb.run("teleport", {}) == "Error: there is no tool named teleport."
-    assert tb.run("look_at_screen", {}) == "Error: there is no tool named look_at_screen."  # screen is off
+    assert tb.run("teleport", {}).startswith("Error: there is no tool named teleport. Available: clipboard, edit_file")
+    assert tb.run("look_at_screen", {}).startswith("Error: there is no tool named look_at_screen.")  # screen is off
 
 
 def test_long_results_are_clipped(tmp_path):
@@ -216,3 +216,21 @@ def test_screen_actions_ask_under_confirm_all(tmp_path):
     assert tb.questions == ["I'm about to click “Submit”. Okay?"]
     assert tb.run("press_keys", {"keys": "ctrl+s"}) == "Pressed ctrl+s."
     assert gui.calls[-1] == ("hotkey", ("ctrl", "s"), {})
+
+
+def test_forgives_common_tool_mistakes(tmp_path):
+    tb = toolbox(tmp_path)
+    (tmp_path / "project" / "a.txt").write_text("hello")
+    assert tb.run("open_app", {"app": "Spotify"}) == "Opened Spotify."  # wrong tool and argument names
+    assert tb.opened == ["Spotify"]
+    assert tb.run("cat", {"file_path": "a.txt", "reason": "user asked"}) == "hello"  # extra argument dropped
+    assert "Wrote" in tb.run("create_file", {"filename": "b.txt", "text": "x"})
+    assert tb.run("edit_file", {"file": "b.txt", "old_string": "x", "new_string": "y"}).startswith("Edited")
+    assert (tmp_path / "project" / "b.txt").read_text() == "y"
+
+
+def test_click_with_numbers_as_text_and_implied_arguments(tmp_path):
+    tb, gui = screen_toolbox(tmp_path)
+    tb.run("look_at_screen", {})
+    assert tb.run("double_click", {"element_id": "3"}).startswith("Clicked at 900,600")
+    assert gui.calls[-1][2]["clicks"] == 2

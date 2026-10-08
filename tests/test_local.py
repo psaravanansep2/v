@@ -334,3 +334,39 @@ def test_free_brain_drives_the_phone(tmp_path, server):
     assert {"type": "goal", "text": "Plan the trip"} in [{k: e[k] for k in ("type", "text")} for e in kinds if e["type"] == "goal"]
     assert "".join(e["delta"] for e in kinds if e["type"] == "text") == "Saved. Where to first?"
     assert [e["busy"] for e in kinds if e["type"] == "busy"] == [True, False]
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        'Let me check. <tool_call>\n{"name": "read_file", "arguments": {"path": "a.txt"}}\n</tool_call>',
+        '{"name": "read_file", "arguments": {"path": "a.txt"}}',
+        '```json\n{"name": "cat", "parameters": {"file": "a.txt"}}\n```',  # fenced, misnamed tool and argument
+        '[{"function": {"name": "read_file", "arguments": "{\\"path\\": \\"a.txt\\"}"}}]',
+    ],
+)
+def test_tool_calls_written_as_text_still_run_and_are_not_spoken(tmp_path, server, written):
+    (tmp_path / "a.txt").write_text("hello there")
+    srv = server([text_chunks(written), text_chunks("It says hello there.")])
+    agent, spoken, _ = make_agent(tmp_path, srv.url)
+    agent.turn("what's in a.txt")
+    tool_msgs = [m for m in agent.history if m["role"] == "tool"]
+    assert len(tool_msgs) == 1 and tool_msgs[0]["content"] == "hello there"
+    assert all("{" not in s and "tool_call" not in s for s in spoken)
+    assert spoken[-1] == "It says hello there."
+
+
+def test_text_that_only_looks_like_json_is_still_spoken(tmp_path, server):
+    srv = server([text_chunks("[1] is the first step. Then save the file.")])
+    agent, spoken, _ = make_agent(tmp_path, srv.url)
+    agent.turn("what's first")
+    assert spoken == ["[1] is the first step.", "Then save the file."]
+    assert "tool_calls" not in agent.history[-1]
+
+
+def test_unknown_names_in_text_are_not_treated_as_calls(tmp_path, server):
+    srv = server([text_chunks('{"name": "Ada", "role": "engineer"}')])
+    agent, spoken, _ = make_agent(tmp_path, srv.url)
+    agent.turn("show me the record")
+    assert "tool_calls" not in agent.history[-1]
+    assert spoken == ['{"name": "Ada", "role": "engineer"}']

@@ -240,6 +240,11 @@ class Agent:
         self.ui.notice(f"{line} {summary}".strip())
         self.say(f"{line} {summary}".strip())
 
+    def remember(self, user_text: str, reply: str) -> None:
+        """Record an exchange handled without the model (an instant command).
+        Appended, never edited, so earlier thinking blocks stay valid."""
+        self.messages += [{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}]
+
     def _take_notes(self) -> list[str]:
         with self._notes_lock:
             notes, self._notes = self._notes, []

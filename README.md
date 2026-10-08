@@ -8,27 +8,52 @@ files, apps and the web, and can use apps on your screen.
 subscription, no API key, nothing sent to an AI company.
 
 ```
+you> what's the weather tomorrow
+v>   Tomorrow in Chicago: rain, high of 58, low of 47, 80 percent chance of rain.
 you> find the PDF invoice I downloaded last week and tell me the total
 v>   Found invoice-0423.pdf in Downloads. The total is 1,240 dollars, due May 30th.
-you> put that in my budget spreadsheet notes and open my email
-v>   Added it to budget-notes.txt and opened Mail.
-you> search for cheap flights to Lisbon in June
-v>   Top results are from Google Flights, Skyscanner and Kayak. Want me to open one?
+you> remind me to pay it at 5 pm
+v>   Okay, I'll remind you at 5:00 PM to pay it.
+you> open Gmail
+v>   Opening Gmail.
 ```
 
 ## What it can do
 
+### Instantly, and right every time
+
+These basics don't use the AI model at all, so they work in a split second
+on any computer:
+
+| Say | v does |
+|---|---|
+| "Open Spotify" · "open YouTube" · "open my downloads folder" | Opens the app, site or folder. Installed apps first, then well-known websites |
+| "Search for cheap flights to Lisbon" | Opens the search results in your browser |
+| "Set a timer for 10 minutes" · "how much time is left" · "cancel the timer" | Timers, out loud when they go off |
+| "Remind me to call Mom in 20 minutes" · "remind me at 5 pm to take out the trash" | Reminders (while v is running) |
+| "Take a note: the meeting moved to Thursday" · "read my notes" | Notes, saved to *v notes.md* in your Documents |
+| "What's the weather" · "will it rain tomorrow" · "my city is Chicago" | Weather from [Open-Meteo](https://open-meteo.com) (free, no account) |
+| "What's 15 percent of 240" · "23 times 47" | Exact math (AI models are bad at arithmetic) |
+| "What time is it" · "what's the date" | Time and date |
+| "Turn the volume up" · "mute" · "take a screenshot" | Volume and screenshots |
+| "Stop" · "what can you do" | Quiet, or a quick tour |
+
+### Everything else, with the AI model
+
 | | |
 |---|---|
 | **Files** | Find, read and summarize files: text, PDF, Word. Write notes, edit documents, organize folders |
-| **Apps and websites** | Open any app, file, folder or web page |
 | **The web** | Search the web and read pages, so you get the answer and not a list of links |
 | **Your screen** | Read what's on screen and click, type, press shortcuts and scroll, to fill forms and use apps |
 | **Clipboard and shell** | Copy and paste for you; run commands, asking first |
 | **Projects** | Remembers what you're working toward (`--goal`) and keeps its help pointed at it |
 | **Phone** | Use any iPhone or Android phone as v's microphone, speaker and screen |
 
-It asks before running commands or changing files outside your project folder.
+v asks before running commands or changing files outside your project
+folder. If it isn't sure what you meant by an instant command ("open the
+file I was working on yesterday"), the AI works it out instead of guessing.
+Small free models sometimes use a tool slightly wrong; v understands the
+common mistakes instead of failing on them.
 
 ## What you need
 

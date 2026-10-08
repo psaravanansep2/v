@@ -629,10 +629,55 @@ def notes_to_todo(rng, split):
                 files={"meeting-notes.txt": "\n".join(lines) + "\n"})
 
 
+def make_page(rng, split):
+    shop = rng.choice(["Tony's Pizza", "Luna Bakery", "Green Bowl Cafe", "Sunset Tacos", "Blue Fin Sushi"])
+    folder = re.sub(r"[^a-z]+", "_", shop.lower()).strip("_") + "_site"
+    dish = rng.choice(["margherita pizza", "sourdough bread", "veggie bowl", "fish tacos", "salmon roll"])
+    prompt = pick(rng, split, [
+        f"Make a simple website for {shop}, with a menu that has {dish}.",
+        f"Build a one-page site for {shop} in a folder called {folder}. Put {dish} on the menu.",
+        f"Create a web page for {shop} with a short menu including {dish}, and show it to me.",
+        f"I need a small website for {shop}. Include {dish} on the menu.",
+        f"Can you make {shop} a homepage with a menu? Add {dish}.",
+        f"Put together a web page for {shop} that lists {dish}.",
+    ])
+
+    def check(o):
+        pages = [p for p in o.project.rglob("*.htm*") if p.is_file()]
+        if not pages:
+            return "no web page was made"
+        page = next((p for p in pages if shop.split("'")[0].lower() in p.read_text(errors="replace").lower()), pages[0])
+        text = page.read_text(encoding="utf-8", errors="replace").lower()
+        if dish.split()[-1] not in text:
+            return f"the page doesn't mention {dish}"
+        from .tools import web_problems
+
+        broken = web_problems(page)
+        if broken:
+            return "the page has problems: " + "; ".join(broken)
+        if not any(str(t).replace("\\", "/").endswith(page.relative_to(o.project).as_posix()) for t in o.opened):
+            return "didn't open the page for the user"
+        return None
+
+    css = (".hero { padding: 3rem; text-align: center; animation: fadeIn 1s ease-out; }\n"
+           "@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }\n"
+           "body { font-family: sans-serif; margin: 0; } .menu li { padding: .5rem 0; }\n")
+    html = (f"<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{shop}</title>"
+            f"<link rel=\"stylesheet\" href=\"style.css\"></head>\n<body><header class=\"hero\"><h1>{shop}</h1></header>\n"
+            f"<main><h2>Menu</h2><ul class=\"menu\"><li>{dish.capitalize()}</li><li>Soup of the day</li></ul></main>\n"
+            f"</body></html>\n")
+    return Task("make a web page", prompt, check,
+                [call("write_file", path=f"{folder}/style.css", content=css),
+                 call("write_file", path=f"{folder}/index.html", content=html),
+                 call("open", target=f"{folder}/index.html"),
+                 say(f"I made a page for {shop} with {dish} on the menu and opened it.")])
+
+
 FAMILIES: dict = {
     "read": read_fact, "find": find_invoice, "write": write_list, "edit": edit_config, "docx": contract_date,
     "photo": receipt_photo, "count": count_photos, "web": web_hours, "click": save_dialog, "form": signup_form,
     "goal": set_goal, "open": open_document, "refuse": declined_delete, "question": plain_question, "todo": notes_to_todo,
+    "site": make_page,
 }
 
 

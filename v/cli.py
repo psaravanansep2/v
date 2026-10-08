@@ -85,7 +85,7 @@ def _parser() -> argparse.ArgumentParser:
     command("screen-test", "check that v can see your screen and move the pointer (it never clicks)")
     ev = command("eval", "score a model on everyday tasks with v's real tools (files, web, screen, ...)")
     ev.add_argument("--families", help="comma-separated kinds of task (default: all): " + "read, find, write, edit, docx, "
-                    "photo, count, web, click, form, goal, open, refuse, question, todo")
+                    "photo, count, web, click, form, goal, open, refuse, question, todo, site")
     ev.add_argument("--per-family", type=int, default=1, help="tasks of each kind (default 1)")
     ev.add_argument("--seed", type=int, default=2026, help="same seed, same tasks: compare models fairly")
     ev.add_argument("--json", dest="json_path", help="also write the results here")

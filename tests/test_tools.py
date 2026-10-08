@@ -305,3 +305,81 @@ def _rotated_exif():
     exif = Image.Exif()
     exif[0x0112] = 6  # Orientation: rotate 90° clockwise to display
     return exif
+
+
+def test_web_pages_are_checked_when_written(tmp_path):
+    tb = toolbox(tmp_path)
+    out = tb.run("write_file", {"path": "site/style.css",
+                                "content": "@keyframes slideDown {from{top:-9px}to{top:0}}\nh1 { animation: 2s colorShift infinite; }\n"})
+    assert "an animation uses colorShift, but there's no @keyframes colorShift" in out
+    assert "@keyframes slideDown isn't used by any animation" in out
+    out = tb.run("write_file", {"path": "site/index.html", "content":
+                                '<link href="styles.css" rel="stylesheet"><img src="images/a.jpg"><a href="#top">t</a>'
+                                '<script src="https://cdn.example/x.js"></script><a href="mailto:x@y.z">m</a>'})
+    assert "it links to styles.css, which doesn't exist (there is style.css)" in out
+    assert "images/a.jpg, which doesn't exist" in out and "cdn.example" not in out and "#top" not in out
+    out = tb.run("edit_file", {"path": "site/index.html", "old_text": "styles.css", "new_text": "style.css"})
+    assert "styles.css" not in out and "images/a.jpg" in out
+    fine = tb.run("write_file", {"path": "site/ok.css", "content": "p { animation: fade 1s; } @keyframes fade {to{opacity:1}}"})
+    assert "Problems" not in fine
+    assert "Problems" not in tb.run("write_file", {"path": "notes.txt", "content": "styles.css"})  # not a web page
+
+
+def _png(w=2400, h=1600):
+    import io
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), "red").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_free_pictures_for_a_page(tmp_path):
+    import json as _json
+
+    asked = []
+
+    def fetch(url):
+        asked.append(url)
+        if "openverse" in url:
+            return _json.dumps({"results": [
+                {"url": "https://img.example/1.png", "title": "Margherita", "creator": "Ana", "license": "by",
+                 "license_version": "2.0", "foreign_landing_url": "https://flickr.example/1"},
+                {"url": "https://img.example/broken", "title": "x", "creator": "y", "license": "by"},
+                {"url": "https://img.example/2.png", "title": "Oven", "creator": "Ben", "license": "cc0",
+                 "license_version": "1.0", "foreign_landing_url": "https://flickr.example/2"},
+            ]}), "application/json"
+        raise OSError("unexpected")
+
+    def download(url):
+        if "broken" in url:
+            raise OSError("404")
+        return _png(), "image/png"
+
+    tb = toolbox(tmp_path, fetch=fetch)
+    tb.download = download
+    out = tb.run("find_images", {"q": "pizza", "path": "site/images", "number": 2})  # forgiving names
+    assert out.startswith("Saved 2 pictures in site/images: pizza-1.jpg, pizza-2.jpg.")
+    assert "“Margherita” by Ana, CC BY 2.0 (https://flickr.example/1)" in out
+    saved = tmp_path / "project" / "site" / "images"
+    with Image.open(saved / "pizza-1.jpg") as image:
+        assert max(image.size) == 1600  # resized for the web
+    assert "Oven" in (saved / "CREDITS.txt").read_text()
+    assert "q=pizza" in asked[0]
+
+
+def test_pictures_fall_back_to_wikimedia(tmp_path):
+    import json as _json
+
+    def fetch(url):
+        if "openverse" in url:
+            raise OSError("down")
+        return _json.dumps({"query": {"pages": {"1": {"title": "File:Pizza.jpg", "imageinfo": [{
+            "thumburl": "https://upload.example/pizza.jpg", "descriptionurl": "https://commons.example/Pizza",
+            "extmetadata": {"Artist": {"value": "<a href='x'>Cara</a>"}, "LicenseShortName": {"value": "CC BY-SA 4.0"}}}]}}}}), ""
+
+    tb = toolbox(tmp_path, fetch=fetch)
+    tb.download = lambda url: (_png(800, 600), "image/jpeg")
+    out = tb.run("get_images", {"query": "pizza", "count": 1})
+    assert "Saved 1 pictures in images: pizza-1.jpg" in out and "“Pizza.jpg” by Cara, CC BY-SA 4.0" in out
+    tb.download = lambda url: (_ for _ in ()).throw(OSError("offline"))
+    assert "Couldn't find or download pictures" in tb.run("get_images", {"query": "pasta"})

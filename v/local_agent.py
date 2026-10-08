@@ -131,6 +131,10 @@ def text_tool_calls(content: str, known: Callable[[str], bool]) -> tuple[list[di
     return calls, rest.strip()
 
 
+def _plain(text: str) -> str:
+    return text.replace("**", "").replace("`", "")
+
+
 def system_prompt(cfg: Config, has_screen: bool, suffix: str = "") -> str:
     goal = cfg.goal.strip() or "not set yet; if the user mentions what they're working toward, save it with set_project_goal"
     screen = (
@@ -145,7 +149,11 @@ def system_prompt(cfg: Config, has_screen: bool, suffix: str = "") -> str:
             "The user talks to you out loud and hears your replies, so:",
             "- Answer in one to three short, plain sentences. No markdown, lists, code blocks or links.",
             "- Use your tools to get things done instead of explaining how. Check the result before saying it worked.",
-            "- If a request is unclear, ask one short question.",
+            "- You can build things: web pages, documents, scripts, small programs. Write the files in the project "
+            "folder, then open what you made so the user sees it. get_images finds free photos for it.",
+            "- Ask at most one short question before starting; if details are missing, pick sensible ones and say what "
+            "you chose.",
+            "- If the user says something you made doesn't work, read your files to find out why and fix it.",
             "- If a tool result says the user declined, don't try again; ask what they'd like instead.",
             f"Project folder: {cfg.project_dir}",
             f"Project goal: {goal}",
@@ -268,6 +276,7 @@ class LocalAgent:
             if holding:
                 held += text
                 return
+            text = _plain(text)  # replies are heard: no `code` or **bold** marks
             self.ui.text(text)
             printed = True
             for sentence in chunker.feed(text):

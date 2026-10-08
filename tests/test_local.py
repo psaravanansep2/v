@@ -431,3 +431,20 @@ def test_skips_a_release_without_builds():
     assert local.pick_llama_download(releases, platform="linux", machine="x86_64")["name"] == "llama-b6000-bin-ubuntu-x64.zip"
     with pytest.raises(local.LocalError):
         local.pick_llama_download(releases[:1], platform="linux", machine="x86_64")
+
+
+def test_replies_are_spoken_without_code_or_bold_marks(tmp_path, server):
+    srv = server([text_chunks("I made it. Open **pizza_site/index.html** or `index.html` to see it.")])
+    agent, spoken, ui = make_agent(tmp_path, srv.url)
+    agent.turn("make a site")
+    shown = "".join(e[1] for e in ui.events if e[0] == "text")
+    assert "`" not in shown and "**" not in shown and "pizza_site/index.html" in shown
+    assert all("`" not in s and "*" not in s for s in spoken)
+
+
+def test_the_model_is_told_it_can_build_and_should_open_its_work(tmp_path):
+    from v.local_agent import system_prompt
+
+    prompt = system_prompt(Config(project_dir=tmp_path), True)
+    assert "You can build things" in prompt and "open what you made" in prompt and "get_images" in prompt
+    assert "at most one short question" in prompt and "read your files" in prompt

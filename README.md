@@ -43,6 +43,7 @@ on any computer:
 | | |
 |---|---|
 | **Files** | Find, read and summarize files: text, PDF, Word, and the words in photos and scans. Write notes, edit documents, organize folders |
+| **Make things** | Web pages, documents, scripts and small programs: v writes the files, checks web pages for broken links and animations that never run, opens what it made, and can add free photos (openly licensed, with credits) |
 | **The web** | Search the web and read pages, so you get the answer and not a list of links |
 | **Your screen** | Read what's on screen and click, type, press shortcuts and scroll, to fill forms and use apps |
 | **Clipboard and shell** | Copy and paste for you; run commands, asking first |

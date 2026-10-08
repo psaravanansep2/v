@@ -887,6 +887,23 @@
     }
   }
 
+  function micProblem(name) {
+    // Say what actually went wrong: "blocked" for every failure sends people looking in the wrong place.
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      return isLocal
+        ? "The microphone isn't allowed for v's window. Click the icon at the left of the window's top bar (or the "
+          + "address bar), allow the microphone, then try again."
+        : "The microphone isn't allowed for this page. Tap the icon next to the address and allow it, then try again.";
+    }
+    if (name === "NotFoundError" || name === "OverconstrainedError") {
+      return "No microphone found. Plug one in or turn it on in your sound settings, then try again. You can type meanwhile.";
+    }
+    if (name === "NotReadableError" || name === "AbortError") {
+      return "The microphone is busy or not working. Close other apps that use it (calls, recorders), then try again.";
+    }
+    return "Couldn't use the microphone (" + (name || "unknown problem") + "). You can type instead.";
+  }
+
   let recorder = null, stream = null, chunks = [], silenceTimer = null, discard = false;
 
   async function startRecording() {
@@ -894,7 +911,7 @@
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     } catch (err) {
-      addLine("error", "Microphone blocked. Allow microphone access for this page in your browser settings.");
+      addLine("error", micProblem(err && err.name));
       return;
     }
     const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"];

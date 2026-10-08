@@ -158,6 +158,78 @@ def _http_get(url: str, timeout: int = 20, max_bytes: int = 3_000_000) -> tuple[
     return data.decode(charset, errors="replace"), ctype
 
 
+def _http_download(url: str, timeout: int = 30, max_bytes: int = 15_000_000) -> tuple[bytes, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read(max_bytes), resp.headers.get("Content-Type", "")
+
+
+# --- checking web pages v writes --------------------------------------------------
+# Small models often link a style sheet by the wrong name, or write animations
+# that never run. Saying so right after the write lets them fix it at once.
+
+_LINK = re.compile(r"""(?:href|src)\s*=\s*["']([^"'#?]+)""", re.I)
+_URL = re.compile(r"""url\(\s*["']?([^"')#?]+)""", re.I)
+_KEYFRAMES = re.compile(r"@(?:-webkit-)?keyframes\s+([\w-]+)", re.I)
+_ANIMATION = re.compile(r"(?<![\w-])animation(-name)?\s*:\s*([^;}]+)", re.I)
+_NOT_NAMES = {"infinite", "alternate", "alternate-reverse", "reverse", "normal", "forwards", "backwards", "both", "none",
+              "running", "paused", "linear", "ease", "ease-in", "ease-out", "ease-in-out", "step-start", "step-end",
+              "initial", "inherit", "unset"}
+
+
+def _external(ref: str) -> bool:
+    return bool(re.match(r"^(?:[a-z][a-z0-9+.-]*:|//)", ref, re.I))
+
+
+def _animation_names(value: str, name_only: bool) -> list:
+    names = []
+    for part in value.split(","):
+        tokens = re.sub(r"\w+\([^)]*\)", " ", part).split()  # drop cubic-bezier(...), steps(...)
+        for t in tokens:
+            if name_only or not (t.lower() in _NOT_NAMES or re.fullmatch(r"-?[\d.]+(m?s|%)?", t, re.I)):
+                names.append(t)
+                break
+    return names
+
+
+def web_problems(path: Path) -> list:
+    """What would stop a web page (or its style sheet) from showing as meant."""
+    suffix = path.suffix.lower()
+    if suffix not in (".html", ".htm", ".css"):
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    problems, refs = [], []
+    if suffix != ".css":
+        refs += [r for r in _LINK.findall(text) if not _external(r) and not r.startswith(("javascript:", "mailto:"))]
+    refs += [r for r in _URL.findall(text) if not _external(r)]
+    here = [f.relative_to(path.parent).as_posix() for f in path.parent.rglob("*") if f.is_file()]
+    for ref in dict.fromkeys(refs):
+        target = (path.parent / ref.lstrip("/")).resolve()
+        if not target.exists():
+            import difflib
+
+            near = difflib.get_close_matches(ref, here, n=1, cutoff=0.5)
+            problems.append(f"it links to {ref}, which doesn't exist" + (f" (there is {near[0]})" if near else ""))
+    css = text if suffix == ".css" else " ".join(re.findall(r"<style[^>]*>(.*?)</style>", text, re.S | re.I))
+    defined = set(_KEYFRAMES.findall(css))
+    used = set()
+    for prop, value in _ANIMATION.findall(css):
+        used.update(_animation_names(value, bool(prop)))
+    for name in sorted(used - defined - _NOT_NAMES):
+        problems.append(f"an animation uses {name}, but there's no @keyframes {name}")
+    for name in sorted(defined - used):
+        problems.append(f"@keyframes {name} isn't used by any animation, so it never runs")
+    return problems
+
+
+def _with_problems(message: str, path: Path) -> str:
+    problems = web_problems(path)
+    return message + (" Problems found: " + "; ".join(problems) + ". Fix them." if problems else "")
+
+
 # --- reading text in pictures ---------------------------------------------------
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic", ".heif"}
@@ -335,6 +407,8 @@ TOOL_ALIASES = {
     "mouse_click": "click", "left_click": "click", "double_click": "click", "right_click": "click",
     "copy_to_clipboard": "clipboard", "set_clipboard": "clipboard", "read_clipboard": "clipboard", "get_clipboard": "clipboard",
     "set_goal": "set_project_goal",
+    "find_images": "get_images", "search_images": "get_images", "download_images": "get_images",
+    "get_pictures": "get_images", "find_photos": "get_images", "get_photos": "get_images", "image_search": "get_images",
 }
 # arguments a wrong name implies, e.g. double_click -> double=True
 NAME_DEFAULTS = {
@@ -359,6 +433,9 @@ ARG_ALIASES = {
     "scroll": {"amount_lines": "amount", "clicks": "amount", "dir": "direction"},
     "clipboard": {"content": "text", "value": "text", "mode": "action"},
     "set_project_goal": {"text": "goal", "project_goal": "goal"},
+    "get_images": {"q": "query", "search": "query", "topic": "query", "subject": "query", "keywords": "query",
+                   "dir": "folder", "directory": "folder", "path": "folder", "save_to": "folder", "destination": "folder",
+                   "number": "count", "n": "count", "num": "count", "limit": "count"},
 }
 
 
@@ -397,13 +474,14 @@ def _coerce(handler, args: dict) -> dict:
 
 class Toolbox:
     def __init__(self, cfg: Config, confirmer: Confirmer, ui, screen: Optional[Screen] = None,
-                 opener: Callable[[str], None] = open_with_system, fetch=_http_get):
+                 opener: Callable[[str], None] = open_with_system, fetch=_http_get, download=_http_download):
         self.cfg = cfg
         self.confirmer = confirmer
         self.ui = ui
         self.screen = screen
         self.opener = opener
         self.fetch = fetch
+        self.download = download
 
     # --- definitions ---
 
@@ -423,6 +501,11 @@ class Toolbox:
             _fn("web_search", "Search the web and get the top results (title, address, snippet).",
                 {"query": {"type": "string"}}, ["query"]),
             _fn("read_webpage", "Get the readable text of a web page.", {"url": {"type": "string"}}, ["url"]),
+            _fn("get_images", "Find free, openly licensed photos online and save them in a folder (for a web page or "
+                "document). Returns the file names and the credits to show.",
+                {"query": {"type": "string", "description": "what the photos should show, e.g. pizza"},
+                 "folder": {"type": "string", "description": "where to save them, e.g. pizza_site/images"},
+                 "count": {"type": "integer"}}, ["query"]),
             _fn("clipboard", "Read the clipboard, or put text on it.",
                 {"action": {"type": "string", "enum": ["read", "write"]}, "text": {"type": "string"}}, ["action"]),
             _fn("set_project_goal", "Save the user's overall goal for this project; it's remembered next time.",
@@ -532,7 +615,7 @@ class Toolbox:
         p.parent.mkdir(parents=True, exist_ok=True)
         write_exact(p, content)
         self.ui.activity(f"wrote {p}")
-        return f"Wrote {len(content):,} characters to {p}."
+        return _with_problems(f"Wrote {len(content):,} characters to {p}.", p)
 
     def t_edit_file(self, path: str, old_text: str, new_text: str) -> str:
         p = self._path(path)
@@ -548,7 +631,7 @@ class Toolbox:
             return "The user declined this change."
         write_exact(p, text.replace(old_text, new_text, 1))
         self.ui.activity(f"edited {p}")
-        return f"Edited {p}."
+        return _with_problems(f"Edited {p}.", p)
 
     def t_open(self, target: str) -> str:
         if not target.startswith(("http://", "https://")):
@@ -574,6 +657,69 @@ class Toolbox:
             return page
         title, text = html_to_text(page)
         return f"{title}\n\n{text}" if title else text
+
+    def _image_results(self, query: str, n: int) -> list:
+        """[(url, title, creator, license, page)] from Openverse, or Wikimedia Commons if that fails."""
+        q = urllib.parse.quote_plus(query)
+        try:
+            data = json.loads(self.fetch(f"https://api.openverse.org/v1/images/?q={q}&page_size={n}&mature=false")[0])
+            found = [(r["url"], r.get("title") or query, r.get("creator") or "unknown",
+                      f"CC {r.get('license', '').upper()} {r.get('license_version', '')}".strip(),
+                      r.get("foreign_landing_url") or r["url"]) for r in data.get("results", []) if r.get("url")]
+            if found:
+                return found
+        except (OSError, ValueError, KeyError):
+            pass
+        url = ("https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6"
+               f"&gsrlimit={n}&gsrsearch={q}&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=1600")
+        pages = json.loads(self.fetch(url)[0]).get("query", {}).get("pages", {})
+        found = []
+        for page in pages.values():
+            info = (page.get("imageinfo") or [{}])[0]
+            meta = info.get("extmetadata", {})
+            artist = re.sub(r"<[^>]+>", "", meta.get("Artist", {}).get("value", "")).strip() or "unknown"
+            if info.get("thumburl") or info.get("url"):
+                found.append((info.get("thumburl") or info["url"], page.get("title", query).replace("File:", ""), artist,
+                              meta.get("LicenseShortName", {}).get("value", "free license"), info.get("descriptionurl", "")))
+        return found
+
+    def t_get_images(self, query: str, folder: str = "images", count: int = 3) -> str:
+        count = max(1, min(int(count), 8))
+        dest = self._path(folder)
+        if not self._may_write(dest, "Save pictures into"):
+            return "The user declined this change."
+        dest.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "photo"
+        saved, credits = [], []
+        for url, title, creator, license_, page in self._image_results(query, count * 2):
+            if len(saved) >= count:
+                break
+            try:
+                data, ctype = self.download(url)
+                name = f"{slug}-{len(saved) + 1}.jpg"
+                try:
+                    from PIL import Image
+
+                    with Image.open(io.BytesIO(data)) as image:
+                        image = image.convert("RGB")
+                        image.thumbnail((1600, 1600))  # web-sized
+                        image.save(dest / name, format="JPEG", quality=85)
+                except ImportError:
+                    ext = {"image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}.get(ctype.split(";")[0], ".jpg")
+                    name = name[:-4] + ext
+                    (dest / name).write_bytes(data)
+            except Exception:  # a broken or unreachable picture: try the next one
+                continue
+            saved.append(name)
+            credits.append(f"{name}: “{title}” by {creator}, {license_}" + (f" ({page})" if page else ""))
+        if not saved:
+            return f"Couldn't find or download pictures of {query} (check the internet connection)."
+        with open(dest / "CREDITS.txt", "a", encoding="utf-8") as f:
+            f.write("\n".join(credits) + "\n")
+        self.ui.activity(f"saved {len(saved)} pictures of {query} to {dest}")
+        where = dest.relative_to(self.cfg.project_dir.resolve()).as_posix() if self._inside_project(dest) else str(dest)
+        return (f"Saved {len(saved)} pictures in {where}: {', '.join(saved)}. Credits (show them on the page, e.g. in the "
+                f"footer): " + "; ".join(credits))
 
     def t_clipboard(self, action: str, text: Optional[str] = None) -> str:
         import pyperclip

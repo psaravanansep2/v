@@ -50,7 +50,7 @@ def open_window(url: str) -> None:
         return
     profile = STATE_DIR / "window"  # its own profile: remembers the microphone permission, no browser clutter
     subprocess.Popen(
-        [browser, f"--app={url}", "--window-size=460,860", f"--user-data-dir={profile}",
+        [browser, f"--app={url}", "--window-size=1120,780", f"--user-data-dir={profile}",
          "--no-first-run", "--no-default-browser-check"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )

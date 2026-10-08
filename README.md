@@ -42,7 +42,7 @@ on any computer:
 
 | | |
 |---|---|
-| **Files** | Find, read and summarize files: text, PDF, Word. Write notes, edit documents, organize folders |
+| **Files** | Find, read and summarize files: text, PDF, Word, and the words in photos and scans. Write notes, edit documents, organize folders |
 | **The web** | Search the web and read pages, so you get the answer and not a list of links |
 | **Your screen** | Read what's on screen and click, type, press shortcuts and scroll, to fill forms and use apps |
 | **Clipboard and shell** | Copy and paste for you; run commands, asking first |
@@ -107,8 +107,24 @@ v check
 
 ## Use
 
-Click the **v icon**. v opens in its own window: tap the microphone and
-talk, or type. The phone button shows a code to scan with your phone.
+Click the **v icon**. v opens in its own window. The window and your phone
+each get a layout made for them.
+
+**On the computer**, the conversation sits next to a side panel showing:
+
+- what v sees on your screen while it works (click to enlarge)
+- your timers and reminders counting down, each with its own cancel button
+- your project goal (click Edit to change it; v hears about the change)
+- what v has done: apps opened, files written and edited, commands run
+- a code to scan with your phone, and which AI, voice and safety settings are in use
+
+Keyboard: **hold Space** to talk and let go to send (a quick tap listens
+until you pause). **Enter** sends, **Shift+Enter** adds a new line, **Esc**
+stops v (or cancels listening), and **/** jumps to the message box. **Drop
+files** anywhere on the window, or paste a screenshot, to hand them to v:
+"what does this receipt say?", "summarize this PDF", "fix the typos in this".
+Files you hand v, from the computer or the phone, are copied into the
+project's `.v/inbox` folder (kept out of git).
 
 From a terminal:
 
@@ -131,7 +147,9 @@ code in the terminal. v opens in the phone's browser: no app to install, no
 app store.
 
 - **Talk:** tap the big button and speak.
-- **Watch:** replies appear as they come, with a preview of your computer's screen while v works on it.
+- **Show:** tap the paperclip to send a photo or file. Take a picture of a letter, a receipt or a whiteboard and ask about it; v reads the words in it on your computer.
+- **Watch:** replies appear as they come, with a preview of your computer's screen while v works on it. Timers show as a countdown at the top.
+- **Goal:** tap the goal at the top to change it.
 - **Approve:** tap Yes or No when v asks before doing something.
 - **Stop:** tap Stop to interrupt v.
 - **Install:** keep it one tap away with Share → *Add to Home Screen* (iPhone) or ⋮ → *Add to Home screen* (Android).
@@ -204,9 +222,11 @@ pytest
 v check     # end to end with a real local model
 ```
 
-CI runs the tests on macOS, Windows and Linux, runs both installers, and
-runs `v check` against a real free model (Qwen3 4B) through Ollama and
-through v's own llama.cpp runner.
+CI runs the tests on macOS, Windows and Linux, runs both installers, drives
+the app in a real browser at computer and phone sizes (`tests/test_ui.py`,
+needs `pip install playwright && playwright install chromium`), and runs
+`v check` against a real free model (Qwen3 4B) through Ollama and through
+v's own llama.cpp runner.
 
 The tests use fakes for the mic, speakers, screen, OCR, model servers
 (OpenAI-style and Ollama) and the `claude` binary, talking over real HTTP.

@@ -22,6 +22,7 @@ import ipaddress
 import json
 import os
 import queue
+import re
 import secrets
 import socket
 import ssl
@@ -34,7 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
 from typing import Callable, Optional
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .speech import to_wav
 from .ui import Interrupted
@@ -42,6 +43,7 @@ from .ui import Interrupted
 STATE_DIR = Path.home() / ".v" / "phone"
 DEFAULT_PORT = 8765
 MAX_UPLOAD = 25 * 1024 * 1024
+MAX_ATTACHMENTS = 20
 ASK_TIMEOUT_S = 300
 
 
@@ -124,7 +126,7 @@ class PhoneUI:
         self.hub.publish({"type": "progress", "text": note})
 
     def activity(self, line: str) -> None:
-        self.hub.publish({"type": "activity", "text": line})
+        self.hub.publish({"type": "activity", "text": line, "at": round(time.time() * 1000)})
 
     def notice(self, line: str) -> None:
         self.hub.publish({"type": "notice", "text": line})
@@ -143,6 +145,9 @@ class PhoneUI:
 
     def goal(self, goal: str) -> None:
         self.hub.publish({"type": "goal", "text": goal})
+
+    def timers(self, items: list) -> None:
+        self.hub.publish({"type": "timers", "items": items})
 
 
 class PhoneVoice:
@@ -193,13 +198,14 @@ class Bridge:
 
     # called from HTTP handler threads
 
-    def submit_text(self, text: str) -> str:
+    def submit_text(self, text: str, files: tuple = ()) -> str:
         text = text.strip()
-        if not text:
+        files = tuple(str(f) for f in files if str(f).strip())[:MAX_ATTACHMENTS]
+        if not text and not files:
             return "empty"
-        if self._answer_pending(text):
+        if not files and self._answer_pending(text):
             return "answered"
-        self.inbox.put(("text", text))
+        self.inbox.put(("text", text, files))
         return "queued"
 
     def submit_audio(self, data: bytes) -> str:
@@ -213,7 +219,7 @@ class Bridge:
             if text and self._answer_pending(text, echo=False):
                 return "answered"
             return "empty"
-        self.inbox.put(("audio", data))
+        self.inbox.put(("audio", data, ()))
         return "queued"
 
     def answer(self, ask_id: str, reply: str) -> bool:
@@ -266,7 +272,7 @@ class Bridge:
         import anthropic
 
         while True:
-            kind, payload = self.inbox.get()
+            kind, payload, files = self.inbox.get()
             if kind == "stop":
                 return
             if self.agent is None:
@@ -282,9 +288,13 @@ class Bridge:
                         continue
                 else:
                     text = payload
-                self.log(f"phone> {text}")
-                self.hub.publish({"type": "user", "text": text})
-                self.agent.turn(text)
+                self.log(f"you> {text}" + "".join(f" [{Path(f).name}]" for f in files))
+                if files:
+                    self.hub.publish({"type": "user", "text": text, "files": [Path(f).name for f in files]})
+                    self.agent.turn(with_attachments(text, files), quick=False)
+                else:
+                    self.hub.publish({"type": "user", "text": text})
+                    self.agent.turn(text)
             except anthropic.AuthenticationError:
                 self.hub.publish({"type": "error", "text": "Claude API authentication failed. Check ANTHROPIC_API_KEY on the computer."})
                 self.hub.publish({"type": "busy", "busy": False})
@@ -294,7 +304,41 @@ class Bridge:
 
     def stop(self) -> None:
         self.interrupt()
-        self.inbox.put(("stop", None))
+        self.inbox.put(("stop", None, ()))
+
+
+def with_attachments(text: str, files) -> str:
+    """What the model is told when the user hands it files along with (or instead of) a message."""
+    files = list(files)
+    ask = text or ("Take a look at this file." if len(files) == 1 else "Take a look at these files.")
+    listing = "\n".join(f"- {f}" for f in files)
+    return f"{ask}\n\nAttached (saved on this computer):\n{listing}"
+
+
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def save_upload(folder: Path, name: str, data: bytes) -> Path:
+    """Saves a file the user dropped or attached; never overwrites, never leaves the folder."""
+    name = name.replace("\\", "/").rsplit("/", 1)[-1]
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", name).strip(" .") or "file"
+    stem, dot, suffix = name.rpartition(".") if "." in name else (name, "", "")
+    if stem.upper() in _RESERVED:
+        stem = "_" + stem
+    stem, suffix = stem[:100], suffix[:16]
+    folder.mkdir(parents=True, exist_ok=True)
+    ignore = folder / ".gitignore"
+    if not ignore.exists():  # copies handed to v, not part of the project's history
+        ignore.write_text("*\n", encoding="utf-8")
+    for n in range(1, 1000):
+        target = folder / (f"{stem}{dot}{suffix}" if n == 1 else f"{stem} ({n}){dot}{suffix}")
+        try:
+            with open(target, "xb") as f:
+                f.write(data)
+            return target
+        except FileExistsError:
+            continue
+    raise RuntimeError("too many files with that name")
 
 
 # --- HTTP ---------------------------------------------------------------
@@ -407,7 +451,10 @@ class Handler(BaseHTTPRequestHandler):
                 if ctype.startswith("audio/") or ctype == "video/mp4" or ctype == "application/octet-stream":
                     return self._json(200, {"status": bridge.submit_audio(body)})
                 data = json.loads(body or b"{}")
-                return self._json(200, {"status": bridge.submit_text(str(data.get("text", "")))})
+                files = data.get("files") or []
+                if not isinstance(files, list):
+                    files = []
+                return self._json(200, {"status": bridge.submit_text(str(data.get("text", "")), tuple(files))})
             if path == "/answer":
                 data = json.loads(body or b"{}")
                 ok = bridge.answer(str(data.get("id", "")), str(data.get("answer", "")))
@@ -415,11 +462,23 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/interrupt":
                 bridge.interrupt()
                 return self._json(200, {"ok": True})
+            if path == "/upload" and self.server.upload_dir is not None:
+                name = unquote(self.headers.get("X-Filename") or "") or "file"
+                saved = save_upload(self.server.upload_dir, name, body)
+                return self._json(200, {"name": saved.name, "path": str(saved)})
+            if path == "/goal" and self.server.on_goal is not None:
+                data = json.loads(body or b"{}")
+                self.server.on_goal(str(data.get("goal", "")).strip()[:2000])
+                return self._json(200, {"ok": True})
+            if path == "/timer/cancel" and self.server.on_cancel_timer is not None:
+                data = json.loads(body or b"{}")
+                ok = self.server.on_cancel_timer(str(data.get("id", "")))
+                return self._json(200 if ok else 404, {"ok": ok})
             if path == "/quit" and self.server.on_quit is not None:
                 self._json(200, {"ok": True})
                 threading.Thread(target=self.server.on_quit, daemon=True).start()
                 return
-        except (json.JSONDecodeError, RuntimeError) as e:
+        except (json.JSONDecodeError, RuntimeError, OSError) as e:
             return self._json(400, {"error": str(e)})
         self._json(404, {"error": "not found"})
 
@@ -437,7 +496,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            send({"type": "hello", **self.server.hello()})
+            send({"type": "hello", **self.server.hello(), "now": round(time.time() * 1000)})  # lets the page correct for clock drift
             for event in history:
                 send({**event, "replay": True})
             send({"type": "replay_end"})
@@ -467,7 +526,11 @@ class PhoneServer(ThreadingHTTPServer):
         self.hello = hello
         self.ssl_context = ssl_context
         self.stopping = threading.Event()
+        # optional features the app turns on
         self.on_quit: Optional[Callable[[], None]] = None
+        self.on_goal: Optional[Callable[[str], None]] = None
+        self.on_cancel_timer: Optional[Callable[[str], bool]] = None
+        self.upload_dir: Optional[Path] = None
 
     def finish_request(self, request, client_address):
         # TLS handshake on the per-connection thread, so one slow or broken

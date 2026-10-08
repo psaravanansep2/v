@@ -6,7 +6,7 @@ from PIL import Image
 
 from v.config import Config, load_goal
 from v.confirm import Confirmer
-from v.tools import Screen, Toolbox, html_to_text, parse_arguments, parse_search_results
+from v.tools import Screen, Toolbox, html_to_text, parse_arguments, parse_search_results, read_image
 
 
 class RecordingUI:
@@ -244,3 +244,50 @@ def test_files_keep_their_line_endings_and_unicode(tmp_path):
     assert crlf.read_bytes() == "1st line\r\n2nd line\r\ncafé\r\n".encode("utf-8")  # still CRLF, nothing else touched
     tb.run("write_file", {"path": "notes.txt", "content": "Zürich\nnaïve"})
     assert (tmp_path / "project" / "notes.txt").read_bytes() == "Zürich\nnaïve".encode("utf-8")
+
+
+class WordsOCR:
+    """Fake OCR: words at given boxes, out of order like real OCR output can be."""
+
+    def __call__(self, image):
+        def box(x, y, w=80, h=20):
+            return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+
+        return [
+            (box(200, 52), "$4.50", 0.95),
+            (box(10, 10), "Corner Cafe", 0.99),
+            (box(10, 50), "Latte", 0.9),
+            (box(10, 90, h=24), "Total", 0.9),
+            (box(200, 93), "$4.50", 0.9),
+            (box(300, 300), "smudge", 0.2),  # low confidence: dropped
+        ], 0.1
+
+
+def test_reads_the_words_in_a_picture(tmp_path):
+    Image.new("RGB", (400, 200), "white").save(tmp_path / "receipt.jpg")
+    out = read_image(tmp_path / "receipt.jpg", WordsOCR())
+    assert out.splitlines()[1:] == ["Corner Cafe", "Latte  $4.50", "Total  $4.50"]
+    assert out.startswith("receipt.jpg is a 400x200 picture.")
+    tb = toolbox(tmp_path, screen=SimpleNamespace(_ocr=WordsOCR()))
+    assert "Latte  $4.50" in tb.run("read_file", {"path": str(tmp_path / "receipt.jpg")})
+
+
+def test_reads_a_real_photo_of_text(tmp_path):
+    pytest.importorskip("rapidocr_onnxruntime")
+    from PIL import ImageDraw
+
+    from v.check import sample_font
+
+    image = Image.new("RGB", (900, 300), "white")
+    draw = ImageDraw.Draw(image)
+    draw.text((30, 40), "Meeting moved", fill="black", font=sample_font(56))
+    draw.text((30, 160), "Thursday 3pm", fill="black", font=sample_font(56))
+    image.rotate(90, expand=True).save(tmp_path / "note.jpg", exif=_rotated_exif())  # stored sideways, like phone photos
+    lines = read_image(tmp_path / "note.jpg").lower().splitlines()[1:]
+    assert len(lines) == 2 and "meeting" in lines[0] and "thursday" in lines[1]
+
+
+def _rotated_exif():
+    exif = Image.Exif()
+    exif[0x0112] = 6  # Orientation: rotate 90° clockwise to display
+    return exif

@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -157,6 +158,56 @@ def _http_get(url: str, timeout: int = 20, max_bytes: int = 3_000_000) -> tuple[
     return data.decode(charset, errors="replace"), ctype
 
 
+# --- reading text in pictures ---------------------------------------------------
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+_ocr_lock = threading.Lock()
+_ocr = None
+
+
+def ocr_engine():
+    """RapidOCR, loaded once (its models ship with the package: no download)."""
+    global _ocr
+    with _ocr_lock:
+        if _ocr is None:
+            from rapidocr_onnxruntime import RapidOCR
+
+            _ocr = RapidOCR()
+    return _ocr
+
+
+def read_image(p: Path, engine=None) -> str:
+    """The text in a photo, scan or screenshot, line by line."""
+    try:
+        import numpy as np
+        from PIL import Image, ImageOps
+
+        engine = engine or ocr_engine()
+    except ImportError:
+        return f"{p} is a picture. Reading text in pictures needs the free OCR add-on: pip install 'v[free]'."
+    with Image.open(p) as image:
+        image = ImageOps.exif_transpose(image).convert("RGB")  # phone photos are often stored sideways
+    image.thumbnail((2400, 2400))
+    result, _ = engine(np.array(image))
+    words = []
+    for box, text, score in result or []:
+        if float(score) < 0.5 or not text.strip():
+            continue
+        ys = [pt[1] for pt in box]
+        words.append({"text": text.strip(), "x": min(pt[0] for pt in box), "y": sum(ys) / 4, "h": max(ys) - min(ys)})
+    rows: list[list[dict]] = []
+    for w in sorted(words, key=lambda w: w["y"]):
+        if rows and abs(w["y"] - rows[-1][0]["y"]) < max(rows[-1][0]["h"], w["h"]) * 0.5:
+            rows[-1].append(w)
+        else:
+            rows.append([w])
+    lines = ["  ".join(w["text"] for w in sorted(row, key=lambda w: w["x"])) for row in rows]
+    head = f"{p.name} is a {image.width}x{image.height} picture."
+    if not lines:
+        return head + " There's no readable text in it."
+    return head + " Its text, read with OCR (may contain small mistakes):\n" + "\n".join(lines)
+
+
 # --- screen ---------------------------------------------------------------------
 
 
@@ -170,9 +221,7 @@ class Screen:
 
     def _engine(self):
         if self._ocr is None:
-            from rapidocr_onnxruntime import RapidOCR
-
-            self._ocr = RapidOCR()
+            self._ocr = ocr_engine()
         return self._ocr
 
     def look(self) -> tuple[str, str]:
@@ -357,7 +406,7 @@ class Toolbox:
                 {"command": {"type": "string"}}, ["command"]),
             _fn("list_files", "List a folder, or find files whose names match a pattern (like *.pdf) in it and its subfolders.",
                 {"path": path, "pattern": {"type": "string", "description": "Optional glob pattern, e.g. *.pdf or report*"}}, []),
-            _fn("read_file", "Read a text file.", {"path": path}, ["path"]),
+            _fn("read_file", "Read a file: text, PDF, Word, or the words in a picture.", {"path": path}, ["path"]),
             _fn("write_file", "Create or overwrite a text file.", {"path": path, "content": {"type": "string"}}, ["path", "content"]),
             _fn("edit_file", "Replace one exact piece of text in a file with new text.",
                 {"path": path, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, ["path", "old_text", "new_text"]),
@@ -461,6 +510,8 @@ class Toolbox:
             return read_pdf(p)
         if suffix == ".docx":
             return read_docx(p)
+        if suffix in IMAGE_SUFFIXES:
+            return read_image(p, self.screen._ocr if self.screen is not None else None)
         data = p.read_bytes()[:400_000]
         if b"\x00" in data[:2000]:
             return f"{p} isn't a text file ({p.stat().st_size:,} bytes)."

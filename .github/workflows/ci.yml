@@ -23,6 +23,18 @@ jobs:
       - run: python -m pip install -e ".[phone,free,dev]" numpy
       - run: python -m pytest -q
 
+  ui:
+    name: app pages in a real browser (computer and phone sizes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[phone,free,dev]" numpy playwright
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q tests/test_ui.py
+
   installer:
     name: installer (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

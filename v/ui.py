@@ -57,6 +57,9 @@ class TerminalUI:
     def goal(self, goal: str) -> None:
         self._line(f"[goal: {goal}]")
 
+    def timers(self, items: list) -> None:
+        pass  # the app shows these as a countdown list; the terminal doesn't need it
+
 
 class TeeUI:
     """Sends every event to several UIs."""

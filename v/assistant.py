@@ -15,8 +15,8 @@ class Assistant:
         self.ui = ui
         self.say = say
 
-    def turn(self, text: str) -> None:
-        reply = self.quick.handle(text) if self.quick else None
+    def turn(self, text: str, quick: bool = True) -> None:
+        reply = self.quick.handle(text) if self.quick and quick else None
         if reply is None:
             self.agent.turn(text)
             return
@@ -29,6 +29,11 @@ class Assistant:
 
     def cancel(self) -> None:
         self.agent.cancel()
+
+    def goal_changed(self, goal: str) -> None:
+        """The user edited the project goal in the app; the model hears about it."""
+        said = f"I changed the project goal to: {goal}" if goal else "I cleared the project goal."
+        self.agent.remember(said, "Got it." if not goal else "Got it, I'll work toward that.")
 
     def on_session_finish(self, session) -> None:
         self.agent.on_session_finish(session)

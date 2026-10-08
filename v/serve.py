@@ -14,7 +14,7 @@ import threading
 import urllib.request
 from pathlib import Path
 
-from .config import Config
+from .config import Config, save_goal
 
 STATE_DIR = Path.home() / ".v"
 APP_FILE = STATE_DIR / "app.json"
@@ -71,6 +71,12 @@ def run(cfg: Config, args, window: bool) -> int:
     token = phone.load_token(new=args.new_token)
     phone_url = f"{scheme}://{ip}:{args.port}/?t={token}"
 
+    assistant_box: dict = {}
+
+    def timer_list() -> list:
+        assistant = assistant_box.get("assistant")
+        return assistant.quick.timer_list() if assistant and assistant.quick else []
+
     def hello() -> dict:
         return {
             "project": cfg.project_dir.name or str(cfg.project_dir),
@@ -83,7 +89,23 @@ def run(cfg: Config, args, window: bool) -> int:
             "ready": status["ready"],
             "status": status["text"],
             "phone_url": phone_url,
+            "project_path": str(cfg.project_dir),
+            "timers": timer_list(),
         }
+
+    def set_goal(goal: str) -> None:
+        cfg.goal = goal
+        save_goal(cfg.project_dir, goal)
+        hub.publish({"type": "goal", "text": goal})
+        print(f"[goal: {goal or '(cleared)'}]", flush=True)
+        if assistant_box.get("assistant") is not None:
+            assistant_box["assistant"].goal_changed(goal)
+
+    def cancel_timer(timer_id: str) -> bool:
+        assistant = assistant_box.get("assistant")
+        return bool(assistant and assistant.quick and assistant.quick.cancel_timer(timer_id))
+
+    inbox = cfg.project_dir / ".v" / "inbox"
 
     servers = []
     try:
@@ -111,6 +133,9 @@ def run(cfg: Config, args, window: bool) -> int:
     stop = threading.Event()
     for srv in servers:
         srv.on_quit = stop.set
+        srv.on_goal = set_goal
+        srv.on_cancel_timer = cancel_timer
+        srv.upload_dir = inbox
         threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     def prepare() -> None:
@@ -141,6 +166,7 @@ def run(cfg: Config, args, window: bool) -> int:
             hub.publish({"type": "setup_failed", "text": f"Setup didn't finish: {e}"})
             return
         computer_box["sessions"] = sessions
+        assistant_box["assistant"] = assistant
         bridge.agent = assistant
         status.update(ready=True, brain=label, text="Ready")
         hub.publish({"type": "ready", "brain": label})

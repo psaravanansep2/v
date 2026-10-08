@@ -141,6 +141,19 @@ def test_timers(quick):
     assert quick.handle("cancel the timer") == "You don't have any timers or reminders."
 
 
+def test_the_app_sees_timers_change(quick):
+    quick.handle("set a timer for 10 minutes")
+    quick.handle("remind me to call Mom in 20 minutes")
+    shown = [e[1] for e in quick.ui.events if e[0] == "timers"]
+    assert [t["label"] for t in shown[-1]] == ["10 minute timer", "reminder to call Mom"]
+    assert [t["kind"] for t in shown[-1]] == ["timer", "reminder"]
+    first = shown[-1][0]
+    assert quick.cancel_timer(first["id"]) and not quick.cancel_timer(first["id"])
+    assert [t["label"] for t in quick.ui.events[-1][1]] == ["reminder to call Mom"]
+    assert quick.handle("cancel the timer") == "Cancelled your timer."
+    assert quick.ui.events[-1] == ("timers", [])
+
+
 def test_timer_goes_off(quick):
     import time
 
@@ -148,6 +161,7 @@ def test_timer_goes_off(quick):
     time.sleep(1.5)
     assert quick.calls["spoken"] == ["Time's up! Your 1 second timer is done."]
     assert ("notice", "Time's up! Your 1 second timer is done.") in quick.ui.events
+    assert ("timers", []) in quick.ui.events  # gone from the app's list too
 
 
 def test_reminders(quick):
@@ -270,3 +284,12 @@ def test_assistant_routes_and_shares_history(quick):
     assert agent.turns == ["what is the capital of France"]
     assert agent.remembered == [("what time is it", "It's 2:20 PM.")]
     assert ("text", "It's 2:20 PM.") in ui.events
+
+
+def test_attached_files_skip_instant_commands_and_goal_changes_reach_the_model(quick):
+    agent, spoken, ui = FakeAgent(), [], UI()
+    assistant = Assistant(agent, quick, ui, spoken.append)
+    assistant.turn("open this", quick=False)
+    assert agent.turns == ["open this"] and quick.calls["opened"] == []
+    assistant.goal_changed("Launch the shop")
+    assert agent.remembered[-1] == ("I changed the project goal to: Launch the shop", "Got it, I'll work toward that.")

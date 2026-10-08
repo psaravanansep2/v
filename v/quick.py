@@ -15,7 +15,9 @@ import math
 import operator
 import re
 import threading
+import time
 import urllib.parse
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
@@ -426,14 +428,16 @@ class QuickCommands:
             return f"Maybe. There's a {chance} percent chance of rain {label} in {place['name']}."
         return f"Probably not. Only a {chance} percent chance of rain {label} in {place['name']}."
 
-    def _start_timer(self, seconds: float, message: str, label: str) -> None:
-        due = self.now() + timedelta(seconds=seconds)
-        entry = {"label": label, "due": due}
+    def _start_timer(self, seconds: float, message: str, label: str, kind: str = "timer") -> None:
+        entry = {"id": uuid.uuid4().hex[:8], "label": label, "kind": kind,
+                 "due": self.now() + timedelta(seconds=seconds), "ends": time.time() + seconds}
 
         def fire():
             with self._lock:
-                if entry in self.timers:
-                    self.timers.remove(entry)
+                if entry not in self.timers:
+                    return  # cancelled just as it went off
+                self.timers.remove(entry)
+            self._publish_timers()
             self.ui.notice(message)
             self.say(message)
 
@@ -442,6 +446,28 @@ class QuickCommands:
         with self._lock:
             self.timers.append(entry)
         entry["thread"].start()
+        self._publish_timers()
+
+    def timer_list(self) -> list[dict]:
+        """Running timers and reminders, soonest first (for the app's timer list)."""
+        with self._lock:
+            entries = sorted(self.timers, key=lambda e: e["ends"])
+        return [{"id": e["id"], "label": e["label"], "kind": e["kind"], "ends": round(e["ends"] * 1000)} for e in entries]
+
+    def _publish_timers(self) -> None:
+        show = getattr(self.ui, "timers", None)
+        if show is not None:
+            show(self.timer_list())
+
+    def cancel_timer(self, timer_id: str) -> bool:
+        with self._lock:
+            entry = next((e for e in self.timers if e["id"] == timer_id), None)
+            if entry is None:
+                return False
+            self.timers.remove(entry)
+        entry["thread"].cancel()
+        self._publish_timers()
+        return True
 
     def _timer(self, m):
         seconds = parse_duration(m.group("dur"))
@@ -458,6 +484,7 @@ class QuickCommands:
             entry["thread"].cancel()
         if not entries:
             return "You don't have any timers or reminders."
+        self._publish_timers()
         return "Cancelled your timer." if len(entries) == 1 else f"Cancelled all {len(entries)} timers and reminders."
 
     def _time_left(self, m):
@@ -500,7 +527,7 @@ class QuickCommands:
             return None
         (seconds, when_text), task = found
         message = f"Reminder: {task}." if task else "This is your reminder."
-        self._start_timer(seconds, message, f"reminder{' to ' + task if task else ''}")
+        self._start_timer(seconds, message, f"reminder{' to ' + task if task else ''}", kind="reminder")
         return f"Okay, I'll remind you {when_text}{' to ' + task if task else ''}."
 
     def _note(self, m):

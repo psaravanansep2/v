@@ -13,18 +13,22 @@
 <link rel="apple-touch-icon" href="/icon.svg">
 <title>v</title>
 <style>
+  /* One page, two layouts:
+     phone (narrow): thumb-first, a big talk button, the conversation, and nothing else in the way
+     computer (wide): the conversation plus a side panel (screen, timers, goal, what v did, phone pairing),
+                      keyboard shortcuts and drag-and-drop */
   :root {
     --bg: #f6f7fb; --panel: #ffffff; --text: #111827; --muted: #6b7280; --line: #e5e7eb;
     --accent: #4f46e5; --accent-text: #ffffff; --you: #4f46e5; --you-text: #ffffff;
     --v: #ffffff; --danger: #dc2626; --ok: #16a34a; --warn-bg: #fff7ed; --warn-line: #fdba74;
-    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.06);
+    --chip: #eef0f6; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.06);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0b0d12; --panel: #151922; --text: #e5e7eb; --muted: #9ca3af; --line: #262b36;
       --accent: #818cf8; --accent-text: #0b0d12; --you: #4f46e5; --you-text: #ffffff;
       --v: #1b202b; --danger: #f87171; --ok: #4ade80; --warn-bg: #2a1f12; --warn-line: #9a6a2f;
-      --shadow: 0 1px 2px rgba(0,0,0,.4);
+      --chip: #222835; --shadow: 0 1px 2px rgba(0,0,0,.4);
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -35,84 +39,174 @@
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   }
   button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--panel); }
 
-  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex: none; }
   .brand { font-weight: 700; font-size: 22px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); transition: background .2s; }
   .dot.on { background: var(--ok); }
   .dot.busy { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .35; } }
-  .heading { min-width: 0; flex: 1; }
+  .heading { min-width: 0; flex: 1; text-align: left; padding: 0; }
+  .project, .goal { display: block; }
   .project { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .goal { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .goal.unset { color: var(--accent); }
   .icon-btn { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; }
-  .icon-btn:active { background: var(--line); }
+  .icon-btn:hover { background: var(--chip); }
   .icon-btn svg { width: 22px; height: 22px; }
 
-  #screen { border-bottom: 1px solid var(--line); background: var(--panel); }
-  #screen summary { list-style: none; padding: 8px 16px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+  #status { padding: 8px 16px; font-size: 14px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex: none; }
+  #status.failed { color: var(--danger); }
+  #status .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; flex: none; }
+  #status.failed .spin { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .workspace { flex: 1; min-height: 0; display: flex; }
+  .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  aside { display: none; }
+
+  #screen { border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
+  #screen summary { list-style: none; padding: 8px 16px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; cursor: pointer; }
   #screen summary::-webkit-details-marker { display: none; }
-  #screen img { display: block; width: 100%; max-height: 28dvh; object-fit: contain; background: #000; }
+  #screen img { display: block; width: 100%; max-height: 22dvh; object-fit: contain; background: #000; }
+
+  .timer-bar { display: flex; gap: 8px; overflow-x: auto; padding: 8px 16px; border-bottom: 1px solid var(--line); flex: none; scrollbar-width: none; }
+  .pill { display: flex; align-items: center; gap: 6px; flex: none; padding: 4px 4px 4px 10px; border-radius: 999px; background: var(--chip); font-size: 13px; }
+  .pill b { font-variant-numeric: tabular-nums; }
+  .pill button, .chip button, .timer-list button { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
+  .pill button:hover, .chip button:hover, .timer-list button:hover { background: var(--line); color: var(--text); }
 
   main { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; overscroll-behavior: contain; }
-  .empty { margin: auto; text-align: center; color: var(--muted); max-width: 300px; }
+  .empty { margin: auto; text-align: center; color: var(--muted); max-width: 340px; }
   .empty b { display: block; color: var(--text); font-size: 18px; margin-bottom: 6px; }
+  .empty p { margin: 0 0 16px; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .suggestions button { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 14px; color: var(--text); }
+  .suggestions button:hover { border-color: var(--accent); }
+  .suggestions .more { display: none; }
   .msg { max-width: 85%; padding: 10px 14px; border-radius: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .msg.you { align-self: flex-end; background: var(--you); color: var(--you-text); border-bottom-right-radius: 6px; }
   .msg.v { align-self: flex-start; background: var(--v); box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
+  .msg .files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .msg .files span { font-size: 13px; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,.18); }
+  .msg .files:first-child { margin-top: 0; }
   .line { align-self: flex-start; font-size: 14px; color: var(--muted); padding: 0 4px; overflow-wrap: anywhere; }
   .line.activity { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
   .line.notice { align-self: center; text-align: center; }
   .line.error { color: var(--danger); }
+  .typing { align-self: flex-start; display: flex; gap: 4px; padding: 14px 16px; border-radius: 18px; background: var(--v); box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
+  .typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
-  .ask { margin: 0 16px 8px; padding: 14px; border-radius: 16px; background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .ask { margin: 0 16px 8px; padding: 14px; border-radius: 16px; background: var(--warn-bg); border: 1px solid var(--warn-line); flex: none; }
   .ask p { margin: 0 0 12px; font-weight: 600; }
   .ask .row { display: flex; gap: 10px; }
   .ask button { flex: 1; min-height: 48px; border-radius: 12px; font-weight: 600; }
   #yes { background: var(--accent); color: var(--accent-text); }
   #no { background: var(--panel); border: 1px solid var(--line); }
 
-  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
-  form { display: flex; gap: 8px; }
-  #input { flex: 1; min-width: 0; height: 44px; border-radius: 22px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 0 16px; font: inherit; font-size: 16px; }
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); flex: none; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .chip { display: flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 3px 3px 10px; border-radius: 10px; background: var(--chip); font-size: 13px; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip.uploading span::after { content: " · sending…"; color: var(--muted); }
+  .chip.failed { color: var(--danger); }
+  form { display: flex; gap: 8px; align-items: flex-end; }
+  #input { flex: 1; min-width: 0; min-height: 44px; max-height: 120px; resize: none; border-radius: 22px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 10px 16px; font: inherit; font-size: 16px; line-height: 22px; display: block; }
   #send { width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; flex: none; }
   #send svg { width: 20px; height: 20px; }
   .controls { display: flex; align-items: center; justify-content: center; gap: 28px; margin-top: 12px; }
-  .mic { width: 72px; height: 72px; border-radius: 50%; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; box-shadow: var(--shadow); transition: transform .1s; }
+  .mic { width: 72px; height: 72px; border-radius: 50%; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; box-shadow: var(--shadow); transition: transform .1s; flex: none; }
   .mic:active { transform: scale(.96); }
   .mic svg { width: 30px; height: 30px; }
   .mic.recording { background: var(--danger); color: #fff; animation: ring 1.2s ease-out infinite; }
   @keyframes ring { 0% { box-shadow: 0 0 0 0 rgba(220,38,38,.45); } 100% { box-shadow: 0 0 0 18px rgba(220,38,38,0); } }
-  .side { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; }
+  .side { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; flex: none; }
   .side svg { width: 22px; height: 22px; }
-  .side[hidden] { visibility: hidden; display: grid; }
+  #stop[hidden] { display: grid !important; visibility: hidden; }  /* keeps the talk button centred on phones */
   #hint { margin: 10px 0 0; text-align: center; font-size: 13px; color: var(--muted); min-height: 1em; }
-  #status { padding: 8px 16px; font-size: 14px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
-  #status[hidden] { display: none; }
-  #status.failed { color: var(--danger); }
-  #status .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; flex: none; }
-  #status.failed .spin { display: none; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  dialog { border: 0; border-radius: 20px; padding: 24px; background: var(--panel); color: var(--text); max-width: 340px; width: calc(100% - 32px); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+
+  dialog { border: 0; border-radius: 20px; padding: 24px; background: var(--panel); color: var(--text); max-width: 380px; width: calc(100% - 32px); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
   dialog::backdrop { background: rgba(0,0,0,.45); }
   dialog h2 { margin: 0 0 6px; font-size: 18px; }
   dialog p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
-  #qr { display: block; width: 100%; aspect-ratio: 1; background: #fff; border-radius: 12px; padding: 10px; }
+  .qr { display: block; width: 100%; aspect-ratio: 1; background: #fff; border-radius: 12px; padding: 10px; }
   dialog .row { display: flex; gap: 10px; margin-top: 16px; }
   dialog button { flex: 1; min-height: 44px; border-radius: 12px; border: 1px solid var(--line); font-weight: 600; }
-  #quit { color: var(--danger); }
-  [hidden] { display: none; }
+  dialog button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .danger-text { color: var(--danger); }
+  #goalInput { width: 100%; min-height: 110px; resize: vertical; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 10px 12px; font: inherit; }
+  #viewer { max-width: min(1400px, 96vw); width: auto; padding: 8px; background: #000; }
+  #viewer img { display: block; max-width: 100%; max-height: 88vh; cursor: zoom-out; }
+
+  #dropzone { position: fixed; inset: 12px; z-index: 50; border: 3px dashed var(--accent); border-radius: 24px; background: var(--bg); background: color-mix(in srgb, var(--bg) 88%, transparent); display: grid; place-items: center; font-size: 20px; font-weight: 600; pointer-events: none; }
+
+  /* ---------- computer: wide two-pane workspace ---------- */
+  @media (min-width: 900px) {
+    body { font-size: 15px; }
+    .narrow-only { display: none !important; }
+    .chat { border-right: 1px solid var(--line); }
+    main { padding: 24px max(24px, calc((100% - 780px) / 2)); }
+    .msg { max-width: 78%; }
+    .line.activity { display: none; }  /* listed in the side panel instead */
+    .suggestions .more { display: inline-block; }
+    .empty { max-width: 460px; }
+    .ask { margin: 0 max(24px, calc((100% - 780px) / 2)) 10px; }
+
+    footer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 8px; align-items: end;
+             padding: 12px max(24px, calc((100% - 780px) / 2)) 10px; }
+    footer form, footer .controls { display: contents; }
+    #attachments { grid-column: 1 / -1; order: 0; margin: 0; }
+    #attach { order: 1; width: 44px; height: 44px; }
+    #input { order: 2; max-height: 200px; border-radius: 14px; font-size: 15px; }
+    #mic { order: 3; width: 44px; height: 44px; box-shadow: none; }
+    #mic svg { width: 20px; height: 20px; }
+    #stop { order: 4; width: 44px; height: 44px; }
+    #stop[hidden] { display: none !important; }
+    #send { order: 5; transition: background .15s, color .15s; }
+    #send:not(.ready) { background: var(--chip); color: var(--muted); }
+    #hint { order: 6; grid-column: 1 / -1; margin: 2px 0 0; text-align: left; }
+
+    aside { display: flex; flex-direction: column; gap: 12px; width: 340px; flex: none; padding: 16px; overflow-y: auto; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+    .card h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .card h3 button { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--accent); font-weight: 600; padding: 2px 4px; border-radius: 6px; }
+    .card p { margin: 0; }
+    .card .muted { color: var(--muted); font-size: 14px; }
+    #screenSide { display: block; width: 100%; border-radius: 8px; background: #000; cursor: zoom-in; }
+    #goalText { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .timer-list, .activity-list { list-style: none; margin: 0; padding: 0; }
+    .timer-list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+    .timer-list li:first-child { border-top: 0; padding-top: 0; }
+    .timer-list .label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .timer-list .left { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .activity-list li { display: flex; gap: 10px; padding: 5px 0; font-size: 13px; border-top: 1px solid var(--line); }
+    .activity-list li:first-child { border-top: 0; padding-top: 0; }
+    .activity-list time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+    .activity-list span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    #phoneCard .qr { width: 160px; margin: 4px auto 10px; padding: 8px; }
+    .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 14px; }
+    .facts dt { color: var(--muted); }
+    .facts dd { margin: 0; }
+    .card .actions { display: flex; gap: 8px; margin-top: 10px; }
+    .card .actions button { flex: 1; min-height: 36px; border-radius: 10px; border: 1px solid var(--line); font-size: 14px; font-weight: 600; }
+  }
+  @media (min-width: 1400px) { aside { width: 380px; } }
+  @media (max-width: 899.98px) { .wide-only { display: none !important; } }
 </style>
 </head>
 <body>
 <header>
   <div class="brand">v <span id="dot" class="dot" aria-hidden="true"></span></div>
-  <div class="heading">
-    <div class="project" id="project">Connecting…</div>
-    <div class="goal" id="goal"></div>
-  </div>
-  <button class="icon-btn" id="phoneBtn" aria-label="Use v on your phone" hidden>
+  <button class="heading" id="heading" type="button" title="Change the project goal">
+    <span class="project" id="project">Connecting…</span>
+    <span class="goal" id="goal"></span>
+  </button>
+  <button class="icon-btn narrow-only" id="phoneBtn" aria-label="Use v on your phone" hidden>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>
   </button>
   <button class="icon-btn" id="mute" aria-label="Mute v's voice" aria-pressed="false">
@@ -123,45 +217,115 @@
 
 <div id="status" hidden><span class="spin" aria-hidden="true"></span><span id="statusText"></span></div>
 
+<div class="workspace">
+  <section class="chat">
+    <details id="screen" class="narrow-only" hidden open>
+      <summary><span>Your computer's screen</span><span id="screenToggle">tap to hide</span></summary>
+      <img id="screenImg" alt="The latest screenshot v took of your computer">
+    </details>
+    <div id="timerBar" class="timer-bar narrow-only" hidden aria-label="Timers and reminders"></div>
+
+    <main id="log" aria-live="polite">
+      <div class="empty" id="empty">
+        <b>Talk to v</b>
+        <p id="emptyText">Tap the button and say what you need. v works on your computer and answers here.</p>
+        <div class="suggestions" id="suggestions">
+          <button type="button">What's the weather?</button>
+          <button type="button">Set a 10 minute timer</button>
+          <button type="button">Open my downloads folder</button>
+          <button type="button" class="more">Find the PDFs in my Documents folder</button>
+          <button type="button" class="more">Read my notes</button>
+          <button type="button">What can you do?</button>
+        </div>
+      </div>
+      <div class="typing" id="typing" hidden aria-label="v is working"><i></i><i></i><i></i></div>
+    </main>
+
+    <div id="ask" class="ask" hidden role="alertdialog" aria-labelledby="askQ">
+      <p id="askQ"></p>
+      <div class="row"><button id="no">No</button><button id="yes">Yes</button></div>
+    </div>
+
+    <footer>
+      <div id="attachments" class="chips" hidden aria-label="Files to send"></div>
+      <form id="form" autocomplete="off">
+        <textarea id="input" rows="1" placeholder="Message v" enterkeyhint="send" aria-label="Message v"></textarea>
+        <button id="send" type="submit" aria-label="Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+        </button>
+      </form>
+      <div class="controls">
+        <button id="attach" class="side" type="button" aria-label="Attach a photo or file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.4 11.6-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
+        </button>
+        <button id="mic" class="mic" type="button" aria-label="Talk">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>
+        </button>
+        <button id="stop" class="side" type="button" aria-label="Stop what v is doing" hidden>
+          <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+      </div>
+      <p id="hint"></p>
+      <input id="filePicker" type="file" multiple hidden>
+    </footer>
+  </section>
+
+  <aside id="panel" class="wide-only" aria-label="Side panel">
+    <section class="card" id="screenCard" hidden>
+      <h3>Your screen</h3>
+      <img id="screenSide" alt="The latest screenshot v took of your computer. Click to enlarge.">
+    </section>
+    <section class="card" id="timersCard" hidden>
+      <h3>Timers &amp; reminders</h3>
+      <ul class="timer-list" id="timerList"></ul>
+    </section>
+    <section class="card" id="goalCard">
+      <h3>Project goal <button type="button" id="editGoal">Edit</button></h3>
+      <p id="goalText" class="muted">No goal yet. Tell v what you're working toward and it keeps every task pointed at it.</p>
+    </section>
+    <section class="card" id="activityCard">
+      <h3>What v has done</h3>
+      <p class="muted" id="activityEmpty">Apps opened, files changed and commands run show up here.</p>
+      <ul class="activity-list" id="activityList"></ul>
+    </section>
+    <section class="card" id="phoneCard" hidden>
+      <h3>Use v on your phone</h3>
+      <img class="qr" id="qrSide" alt="QR code that opens v on your phone">
+      <p class="muted">Scan with your phone's camera (same Wi-Fi). The first time, tap through the certificate warning; it's v's own.</p>
+    </section>
+    <section class="card" id="sessionCard">
+      <h3>This session</h3>
+      <dl class="facts">
+        <dt>AI</dt><dd id="factBrain">getting ready…</dd>
+        <dt>Hearing</dt><dd id="factHearing">–</dd>
+        <dt>Voice</dt><dd id="factVoice">–</dd>
+        <dt>Screen</dt><dd id="factScreen">–</dd>
+        <dt>Asks first</dt><dd id="factConfirm">–</dd>
+      </dl>
+      <div class="actions" id="localActions" hidden><button type="button" id="quitSide" class="danger-text">Quit v</button></div>
+    </section>
+  </aside>
+</div>
+
 <dialog id="phoneDialog" aria-labelledby="phoneTitle">
   <h2 id="phoneTitle">Use v on your phone</h2>
   <p>Scan with your phone's camera (same Wi-Fi as this computer). The first time, tap through the certificate warning; it's v's own.</p>
-  <img id="qr" alt="QR code that opens v on your phone">
-  <div class="row"><button id="quit" type="button">Quit v</button><button id="closePhone" type="button">Done</button></div>
+  <img class="qr" id="qr" alt="QR code that opens v on your phone">
+  <div class="row"><button id="quit" type="button" class="danger-text">Quit v</button><button id="closePhone" type="button">Done</button></div>
 </dialog>
 
-<details id="screen" hidden open>
-  <summary><span>Your computer's screen</span><span id="screenToggle">tap to hide</span></summary>
-  <img id="screenImg" alt="The latest screenshot v took of your computer">
-</details>
-
-<main id="log" aria-live="polite">
-  <div class="empty" id="empty"><b>Talk to v</b>Tap the button and say what you need. v works on your computer and answers here.</div>
-</main>
-
-<div id="ask" class="ask" hidden role="alertdialog" aria-labelledby="askQ">
-  <p id="askQ"></p>
-  <div class="row"><button id="no">No</button><button id="yes">Yes</button></div>
-</div>
-
-<footer>
-  <form id="form" autocomplete="off">
-    <input id="input" placeholder="Message v" enterkeyhint="send" aria-label="Message v">
-    <button id="send" type="submit" aria-label="Send">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
-    </button>
+<dialog id="goalDialog" aria-labelledby="goalTitle">
+  <form method="dialog" id="goalForm">
+    <h2 id="goalTitle">Project goal</h2>
+    <p>What are you working toward? v keeps its work pointed at this, and remembers it next time.</p>
+    <textarea id="goalInput" maxlength="2000" placeholder="e.g. Launch my bakery's website by June"></textarea>
+    <div class="row"><button value="cancel" type="submit">Cancel</button><button value="save" type="submit" class="primary" id="saveGoal">Save</button></div>
   </form>
-  <div class="controls">
-    <span class="side" aria-hidden="true" style="visibility:hidden"></span>
-    <button id="mic" class="mic" aria-label="Talk">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>
-    </button>
-    <button id="stop" class="side" aria-label="Stop what v is doing" hidden>
-      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-    </button>
-  </div>
-  <p id="hint"></p>
-</footer>
+</dialog>
+
+<dialog id="viewer" aria-label="Screenshot"><img id="viewerImg" alt="The latest screenshot, enlarged"></dialog>
+
+<div id="dropzone" hidden>Drop to give these files to v</div>
 
 <script>
 (() => {
@@ -169,6 +333,9 @@
   const $ = (id) => document.getElementById(id);
   const token = new URLSearchParams(location.search).get("t") || "";
   const withToken = (path) => path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(token);
+  const wide = matchMedia("(min-width: 900px)");
+  const keyboardAndMouse = matchMedia("(pointer: fine)");
+  const isLocal = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
 
   // Install-to-home-screen manifest; it needs the pairing token too.
   const manifest = document.createElement("link");
@@ -176,8 +343,8 @@
   manifest.href = withToken("/manifest.webmanifest");
   document.head.append(manifest);
 
-  const post = (path, body, type = "application/json") =>
-    fetch(path, { method: "POST", headers: { "X-V-Token": token, "Content-Type": type }, body });
+  const post = (path, body, type = "application/json", extra = {}) =>
+    fetch(path, { method: "POST", headers: { "X-V-Token": token, "Content-Type": type, ...extra }, body });
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -190,21 +357,33 @@
   let pendingAsk = null;
   let busy = false;
   let muted = store.get("v-muted") === "1";
+  let skew = 0;           // this device's clock minus the computer's, for countdowns
 
-  // ---------- log ----------
+  // ---------- conversation ----------
   const log = $("log");
+  const typing = $("typing");
   const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 120;
   function add(el) {
     const stick = replaying || nearBottom();
     $("empty").hidden = true;
-    log.append(el);
+    log.insertBefore(el, typing);  // the "v is working" dots stay last
     if (stick) log.scrollTop = log.scrollHeight;
     return el;
   }
-  function addMsg(who, text) {
+  function addMsg(who, text, files) {
     const el = document.createElement("div");
     el.className = "msg " + who;
-    el.textContent = text;
+    if (text) el.append(text);
+    if (files && files.length) {
+      const row = document.createElement("div");
+      row.className = "files";
+      for (const name of files) {
+        const chip = document.createElement("span");
+        chip.textContent = "📎 " + name;
+        row.append(chip);
+      }
+      el.append(row);
+    }
     return add(el);
   }
   function addLine(kind, text) {
@@ -216,9 +395,126 @@
   }
   function resetLog() {
     log.querySelectorAll(".msg, .line").forEach((el) => el.remove());
+    $("activityList").replaceChildren();
+    $("activityEmpty").hidden = false;
     $("empty").hidden = false;
     bubble = null;
+    showTyping();
   }
+  function showTyping() {
+    const stick = nearBottom();
+    typing.hidden = !(busy && !bubble && !pendingAsk);
+    if (stick) log.scrollTop = log.scrollHeight;
+  }
+  $("suggestions").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button");
+    if (b) { unlockAudio(); sendText(b.textContent); }
+  });
+
+  // ---------- side panel: what v has done ----------
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  function tidyPaths(text) {
+    // "wrote /Users/sam/bakery-site/index.html" reads better as "wrote index.html"
+    const root = hello.project_path;
+    return root ? text.split(root + "/").join("").split(root + "\\").join("") : text;
+  }
+  function addActivity(text, at) {
+    const li = document.createElement("li");
+    const time = document.createElement("time");
+    time.textContent = clock(at ? at + skew : Date.now());
+    const what = document.createElement("span");
+    what.textContent = tidyPaths(text);
+    what.title = text;
+    li.append(time, what);
+    const list = $("activityList");
+    list.prepend(li);
+    while (list.children.length > 100) list.lastChild.remove();
+    $("activityEmpty").hidden = true;
+  }
+
+  // ---------- timers and reminders ----------
+  let timers = [];
+  let ticker = null;
+  function left(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    if (s >= 12 * 3600) return null;  // far off: show the clock time instead
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    const mm = h ? String(m).padStart(2, "0") : String(m);
+    return (h ? h + ":" : "") + mm + ":" + String(sec).padStart(2, "0");
+  }
+  const timerLabel = (t) => t.label.charAt(0).toUpperCase() + t.label.slice(1);
+  function cancelTimer(id) {
+    post("/timer/cancel", JSON.stringify({ id })).catch(() => null);
+  }
+  function cancelButton(t) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("aria-label", "Cancel " + t.label);
+    b.textContent = "×";
+    b.onclick = () => cancelTimer(t.id);
+    return b;
+  }
+  function timerText(t) {
+    return left(t.ends + skew - Date.now()) || "at " + clock(t.ends + skew);
+  }
+  function renderTimers() {
+    const list = $("timerList"), bar = $("timerBar");
+    list.replaceChildren();
+    bar.replaceChildren();
+    for (const t of timers) {
+      const li = document.createElement("li");
+      const label = document.createElement("span"); label.className = "label"; label.textContent = timerLabel(t);
+      const time = document.createElement("span"); time.className = "left";
+      li.append(label, time, cancelButton(t));
+      list.append(li);
+      const pill = document.createElement("div");
+      pill.className = "pill";
+      const b = document.createElement("b");
+      const name = document.createElement("span"); name.textContent = timerLabel(t);
+      pill.append(b, name, cancelButton(t));
+      bar.append(pill);
+      t.show = () => {
+        const text = timerText(t);
+        time.textContent = text;
+        b.textContent = (t.kind === "reminder" ? "🔔 " : "⏱ ") + text;
+      };
+      t.show();
+    }
+    $("timersCard").hidden = $("timerBar").hidden = timers.length === 0;
+  }
+  function setTimers(items) {
+    timers = items || [];
+    renderTimers();
+    clearInterval(ticker);
+    if (timers.length) ticker = setInterval(() => timers.forEach((t) => t.show()), 1000);
+  }
+
+  // ---------- project goal ----------
+  function setGoal(text) {
+    hello.goal = text || "";
+    const goal = $("goal");
+    goal.textContent = text || "Set a project goal";
+    goal.classList.toggle("unset", !text);
+    $("goalText").textContent = text || "No goal yet. Tell v what you're working toward and it keeps every task pointed at it.";
+    $("goalText").classList.toggle("muted", !text);
+    $("editGoal").textContent = text ? "Edit" : "Set";
+  }
+  function editGoal() {
+    $("goalDialog").returnValue = "";  // Esc closes without saving
+    $("goalInput").value = hello.goal || "";
+    $("goalDialog").showModal();
+    $("goalInput").focus();
+  }
+  $("heading").onclick = editGoal;
+  $("editGoal").onclick = editGoal;
+  $("goalDialog").addEventListener("close", async () => {
+    if ($("goalDialog").returnValue !== "save") return;
+    const r = await post("/goal", JSON.stringify({ goal: $("goalInput").value })).catch(() => null);
+    if (!r || !r.ok) addLine("error", "Couldn't save the goal. Is v still running on your computer?");
+  });
+  $("goalInput").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); $("saveGoal").click(); }
+  });
 
   // ---------- audio out ----------
   let ctx = null;
@@ -240,6 +536,7 @@
     }
   }
   document.addEventListener("pointerdown", unlockAudio, { capture: true });
+  document.addEventListener("keydown", unlockAudio, { capture: true });
 
   function playAudio(id) {
     if (muted || !ctx) return;
@@ -285,8 +582,10 @@
     if (m) stopAudio();
   }
   $("mute").onclick = () => setMuted(!muted);
+  $("screen").open = store.get("v-screen") !== "closed";  // remembers if you tucked it away
   $("screen").addEventListener("toggle", () => {
     $("screenToggle").textContent = $("screen").open ? "tap to hide" : "tap to show";
+    store.set("v-screen", $("screen").open ? "open" : "closed");
   });
   setMuted(muted);
 
@@ -295,54 +594,81 @@
     busy = b;
     $("stop").hidden = !b;
     $("dot").classList.toggle("busy", b);
+    showTyping();
   }
   function showAsk(id, question) {
     pendingAsk = id;
     $("askQ").textContent = question;
     $("ask").hidden = false;
+    showTyping();
     if (!replaying) $("yes").focus({ preventScroll: true });
   }
   function hideAsk(id) {
     if (id && id !== pendingAsk) return;
     pendingAsk = null;
     $("ask").hidden = true;
+    showTyping();
+  }
+  function describeSession() {
+    $("factBrain").textContent = hello.brain || (hello.ready ? "ready" : "getting ready…");
+    $("factHearing").textContent = hello.stt ? "on this computer (Whisper)" : "this device's speech recognition";
+    $("factVoice").textContent = hello.voice === "server" ? "natural voice (Kokoro)" : "this device's voice";
+    $("factScreen").textContent = hello.computer ? "v can see and use it" : "off";
+    $("factConfirm").textContent = { risky: "before risky actions", all: "before every action", none: "never" }[hello.confirm] || hello.confirm || "–";
   }
 
   const handlers = {
     hello(e) {
       hello = e;
+      if (e.now) {
+        const drift = Date.now() - e.now;
+        skew = Math.abs(drift) < 2000 ? 0 : drift;  // under 2 s is just the time the message took to arrive
+      }
+      busy = false;  // the replay that follows says if v is mid-task
+      setBusy(false);
       resetLog();
       hideAsk();
       replaying = true;
       $("project").textContent = e.project ? "v · " + e.project : "v";
-      $("goal").textContent = e.goal || "No project goal yet";
+      $("project").title = e.project_path || "";
+      setGoal(e.goal);
       setStatus(e.ready ? "" : e.status);
-      $("phoneBtn").hidden = !(isLocal && e.phone_url);
+      const pairing = isLocal && !!e.phone_url;
+      $("phoneBtn").hidden = !pairing;
+      $("phoneCard").hidden = !pairing;
+      if (pairing && !$("qrSide").src) $("qrSide").src = withToken("/qr.svg");
+      $("localActions").hidden = !isLocal;
+      setTimers(e.timers);
+      describeSession();
       configureMic();
     },
     status(e) { if (!hello.ready) setStatus(e.text); },
-    ready(e) { hello.ready = true; hello.brain = e.brain; setStatus(""); },
+    ready(e) { hello.ready = true; hello.brain = e.brain; setStatus(""); describeSession(); },
     setup_failed(e) { setStatus(e.text, true); },
-    replay_end() { replaying = false; },
-    user(e) { bubble = null; addMsg("you", e.text); },
+    replay_end() { replaying = false; showTyping(); },
+    user(e) { bubble = null; addMsg("you", e.text, e.files); showTyping(); },
     text(e) {
-      if (!bubble) bubble = addMsg("v", "");
+      if (!bubble) { bubble = addMsg("v", ""); showTyping(); }
       const stick = nearBottom();
       bubble.textContent += e.delta;
       if (stick) log.scrollTop = log.scrollHeight;
     },
-    text_end() { bubble = null; },
-    progress(e) { addLine("progress", "… " + e.text); },
-    activity(e) { addLine("activity", e.text); },
-    notice(e) { addLine("notice", e.text); },
-    error(e) { addLine("error", e.text); },
-    goal(e) { $("goal").textContent = e.text; },
+    text_end() { bubble = null; showTyping(); },
+    progress(e) { addLine("progress", "… " + e.text); showTyping(); },
+    activity(e) { addLine("activity", tidyPaths(e.text)).title = e.text; addActivity(e.text, e.at); showTyping(); },
+    notice(e) { addLine("notice", e.text); showTyping(); },
+    error(e) { addLine("error", e.text); showTyping(); },
+    goal(e) { setGoal(e.text); },
+    timers(e) { setTimers(e.items); },
     busy(e) { setBusy(e.busy); },
     image(e) {
-      const img = $("screenImg");
+      const src = withToken("/media/" + e.id);
+      const img = $("screenImg"), side = $("screenSide");
       img.onerror = () => { if (!img.dataset.ok) $("screen").hidden = true; };
       img.onload = () => { img.dataset.ok = "1"; $("screen").hidden = false; };
-      img.src = withToken("/media/" + e.id);
+      side.onload = () => { $("screenCard").hidden = false; };
+      img.src = src;
+      side.src = src;
     },
     ask(e) { showAsk(e.id, e.question); },
     ask_done(e) { hideAsk(e.id); },
@@ -352,7 +678,6 @@
   };
 
   // ---------- this computer's own window: setup progress, phone pairing, quit ----------
-  const isLocal = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
   function setStatus(text, failed = false) {
     $("status").hidden = !text;
     $("status").classList.toggle("failed", failed);
@@ -363,11 +688,18 @@
     $("phoneDialog").showModal();
   };
   $("closePhone").onclick = () => $("phoneDialog").close();
-  $("quit").onclick = async () => {
+  async function quit() {
+    if ($("phoneDialog").open) $("phoneDialog").close();
     await post("/quit", "{}").catch(() => null);
-    $("phoneDialog").close();
     setStatus("v has stopped. You can close this window.", true);
+  }
+  $("quit").onclick = quit;
+  $("quitSide").onclick = quit;
+  $("screenSide").onclick = () => {
+    $("viewerImg").src = $("screenSide").src;
+    $("viewer").showModal();
   };
+  $("viewer").onclick = () => $("viewer").close();
 
   let source = null;
   function connect() {
@@ -387,20 +719,119 @@
     if (document.visibilityState === "visible" && source && source.readyState === EventSource.CLOSED) connect();
   });
 
-  // ---------- input ----------
+  // ---------- attachments: photos and files for v ----------
+  const MAX_FILE = 25 * 1024 * 1024;
+  let attachments = [];  // {name, path, state: "uploading" | "ready" | "failed", done: Promise}
+  function renderAttachments() {
+    const row = $("attachments");
+    row.replaceChildren();
+    for (const a of attachments) {
+      const chip = document.createElement("div");
+      chip.className = "chip " + a.state;
+      const name = document.createElement("span");
+      name.textContent = (a.state === "failed" ? "⚠ " : "📎 ") + a.name + (a.state === "failed" ? " · " + a.error : "");
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", "Remove " + a.name);
+      remove.onclick = () => { attachments = attachments.filter((x) => x !== a); renderAttachments(); };
+      chip.append(name, remove);
+      row.append(chip);
+    }
+    row.hidden = attachments.length === 0;
+    fitInput();
+  }
+  function attach(files) {
+    for (const file of files) {
+      const a = { name: file.name || "file", path: "", state: "uploading", error: "" };
+      if (file.size > MAX_FILE) {
+        a.state = "failed";
+        a.error = "too big (25 MB max)";
+        a.done = Promise.resolve();
+      } else {
+        a.done = post("/upload", file, file.type || "application/octet-stream", { "X-Filename": encodeURIComponent(a.name) })
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status === 413 ? "too big" : "couldn't send"))))
+          .then((d) => { a.path = d.path; a.name = d.name; a.state = "ready"; })
+          .catch((err) => { a.state = "failed"; a.error = err.message || "couldn't send"; })
+          .finally(renderAttachments);
+      }
+      attachments.push(a);
+    }
+    renderAttachments();
+    if (wide.matches) $("input").focus();
+  }
+  $("attach").onclick = () => $("filePicker").click();
+  $("filePicker").onchange = () => {
+    attach(Array.from($("filePicker").files));
+    $("filePicker").value = "";
+  };
+  // drag and drop anywhere on the window
+  let dragDepth = 0;
+  const hasFiles = (ev) => ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes("Files");
+  document.addEventListener("dragenter", (ev) => {
+    if (!hasFiles(ev)) return;
+    ev.preventDefault();
+    dragDepth++;
+    $("dropzone").hidden = false;
+  });
+  document.addEventListener("dragover", (ev) => { if (hasFiles(ev)) ev.preventDefault(); });
+  document.addEventListener("dragleave", (ev) => {
+    if (!hasFiles(ev)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) $("dropzone").hidden = true;
+  });
+  document.addEventListener("drop", (ev) => {
+    if (!hasFiles(ev)) return;
+    ev.preventDefault();
+    dragDepth = 0;
+    $("dropzone").hidden = true;
+    attach(Array.from(ev.dataTransfer.files));
+  });
+  // pasting a screenshot or copied file into the message box
+  $("input").addEventListener("paste", (ev) => {
+    const files = Array.from((ev.clipboardData && ev.clipboardData.files) || []);
+    if (files.length) { ev.preventDefault(); attach(files); }
+  });
+
+  // ---------- typing ----------
+  const input = $("input");
+  function fitInput() {
+    $("send").classList.toggle("ready", !!input.value.trim() || attachments.length > 0);
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight + 2, wide.matches ? 200 : 120) + "px";
+  }
+  input.addEventListener("input", fitInput);
   async function sendText(text) {
-    text = text.trim();
-    if (!text) return;
+    text = (text || "").trim();
+    const sending = attachments;
+    if (!text && !sending.length) return;
+    attachments = [];
+    renderAttachments();
     stopAudio();
-    const r = await post("/message", JSON.stringify({ text })).catch(() => null);
+    await Promise.all(sending.map((a) => a.done));
+    const files = sending.filter((a) => a.state === "ready").map((a) => a.path);
+    const failed = sending.filter((a) => a.state === "failed");
+    if (failed.length) addLine("error", "Couldn't send " + failed.map((a) => a.name).join(", ") + ".");
+    if (!text && !files.length) return;
+    const r = await post("/message", JSON.stringify({ text, files })).catch(() => null);
     if (!r || !r.ok) addLine("error", "Couldn't reach v. Is it still running on your computer?");
   }
   $("form").onsubmit = (ev) => {
     ev.preventDefault();
-    const input = $("input");
     sendText(input.value);
     input.value = "";
+    fitInput();
+    if (wide.matches) input.focus();
   };
+  input.addEventListener("keydown", (ev) => {
+    // Enter sends; Shift+Enter starts a new line (phones: the keyboard's send key)
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+      ev.preventDefault();
+      const form = $("form");
+      if (form.requestSubmit) form.requestSubmit();
+      else form.dispatchEvent(new Event("submit", { cancelable: true }));
+    }
+  });
   $("yes").onclick = () => answer("yes");
   $("no").onclick = () => answer("no");
   function answer(reply) {
@@ -408,42 +839,58 @@
     post("/answer", JSON.stringify({ id: pendingAsk, answer: reply }));
     hideAsk();
   }
-  $("stop").onclick = () => { stopAudio(); post("/interrupt", "{}"); };
+  function stopEverything() {
+    stopAudio();
+    post("/interrupt", "{}").catch(() => null);
+  }
+  $("stop").onclick = stopEverything;
 
   // ---------- microphone ----------
   // record:   record here, v transcribes on the computer (private, any language Whisper knows)
-  // browser:  the phone's built-in speech recognition
+  // browser:  this device's built-in speech recognition
   // keyboard: no secure connection, so no microphone access; use the keyboard's dictation key
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const canRecord = window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder;
   let micMode = "keyboard";
   let recording = false;
 
+  function idleHint() {
+    if (micMode === "keyboard") {
+      return window.isSecureContext
+        ? "Tap the message box and use your keyboard's microphone key to talk."
+        : "Use your keyboard's microphone key to talk. (The talk button needs the https link.)";
+    }
+    return keyboardAndMouse.matches
+      ? "Hold Space to talk · Enter to send · Shift+Enter for a new line · Esc to stop · Drop files to share them"
+      : "Tap to talk. v stops listening when you pause.";
+  }
   function configureMic() {
     if (hello.stt && canRecord) micMode = "record";
     else if (window.isSecureContext && SR) micMode = "browser";
     else micMode = "keyboard";
-    const hint = $("hint");
-    if (micMode === "keyboard") {
-      hint.textContent = window.isSecureContext
-        ? "Tap the message box and use your keyboard's microphone key to talk."
-        : "Use your keyboard's microphone key to talk. (The talk button needs the https link.)";
-      $("mic").setAttribute("aria-label", "Talk using keyboard dictation");
-    } else {
-      hint.textContent = "Tap to talk. v stops listening when you pause.";
-    }
+    $("mic").setAttribute("aria-label", micMode === "keyboard" ? "Talk using keyboard dictation" : "Talk");
+    $("hint").textContent = idleHint();
+    $("emptyText").textContent = keyboardAndMouse.matches
+      ? "Say what you need (hold Space or click the microphone), or type it. v works on this computer and answers here."
+      : "Tap the button and say what you need. v works on your computer and answers here.";
   }
+  wide.addEventListener("change", () => { configureMic(); fitInput(); });
 
   function setRecording(r) {
     recording = r;
     $("mic").classList.toggle("recording", r);
     $("mic").setAttribute("aria-label", r ? "Stop and send" : "Talk");
-    if (micMode !== "keyboard") $("hint").textContent = r ? "Listening… tap again to send." : "Tap to talk. v stops listening when you pause.";
+    if (micMode !== "keyboard") {
+      $("hint").textContent = r
+        ? (keyboardAndMouse.matches ? "Listening… let go of Space (or click) to send, Esc to cancel." : "Listening… tap again to send.")
+        : idleHint();
+    }
   }
 
-  let recorder = null, stream = null, chunks = [], silenceTimer = null;
+  let recorder = null, stream = null, chunks = [], silenceTimer = null, discard = false;
 
   async function startRecording() {
+    discard = false;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     } catch (err) {
@@ -459,6 +906,7 @@
       clearInterval(silenceTimer);
       stream.getTracks().forEach((t) => t.stop());
       setRecording(false);
+      if (discard) return;
       const blob = new Blob(chunks, { type: recorder.mimeType || type || "audio/mp4" });
       if (blob.size < 2000) return;  // tapped by accident
       const r = await post("/message", blob, (blob.type || "audio/mp4").split(";")[0]).catch(() => null);
@@ -479,6 +927,7 @@
     const started = Date.now();
     let floor = null, spoke = false, quietSince = null;
     silenceTimer = setInterval(() => {
+      if (spaceHeld) return;  // push-to-talk: you decide when you're done
       analyser.getFloatTimeDomainData(data);
       let sum = 0;
       for (const x of data) sum += x * x;
@@ -495,44 +944,99 @@
     }, 100);
   }
 
-  function stopRecording() {
+  function stopRecording(cancel = false) {
     clearInterval(silenceTimer);
+    discard = cancel;
     if (recorder && recorder.state !== "inactive") recorder.stop();
   }
 
   let recognition = null;
   function startBrowserRecognition() {
+    discard = false;
     recognition = new SR();
     recognition.lang = navigator.language || "en-US";
     recognition.interimResults = true;
     recognition.continuous = false;
-    const input = $("input");
     recognition.onresult = (e) => {
       input.value = Array.from(e.results).map((r) => r[0].transcript).join("");
+      fitInput();
     };
     recognition.onerror = (e) => {
-      if (e.error === "not-allowed") addLine("error", "Microphone blocked. Allow microphone access for this page.");
+      const why = {
+        "not-allowed": "Microphone blocked. Allow microphone access for this page.",
+        "service-not-allowed": "Microphone blocked. Allow microphone access for this page.",
+        "audio-capture": "No microphone found. Plug one in or check your sound settings, or type instead.",
+        "network": "This browser's speech recognition needs the internet. Type instead, or add v's own free speech "
+          + "recognition on the computer: pip install 'v[voice]'.",
+        "language-not-supported": "This browser can't recognise speech in your language. Type instead.",
+      }[e.error];
+      if (why) addLine("error", why);
     };
     recognition.onend = () => {
       setRecording(false);
       const text = input.value;
       input.value = "";
-      sendText(text);
+      fitInput();
+      if (!discard) sendText(text);
     };
     recognition.start();
     setRecording(true);
   }
 
-  $("mic").onclick = () => {
+  function startTalking() {
     unlockAudio();
-    if (micMode === "keyboard") { $("input").focus(); return; }
-    if (recording) {
-      if (micMode === "record") stopRecording(); else if (recognition) recognition.stop();
-      return;
-    }
     stopAudio();  // talking over v interrupts its speech
     if (micMode === "record") startRecording(); else startBrowserRecognition();
+  }
+  function finishTalking(cancel = false) {
+    if (micMode === "record") stopRecording(cancel);
+    else if (recognition) { discard = cancel; recognition.stop(); }
+  }
+  $("mic").onclick = () => {
+    unlockAudio();
+    if (micMode === "keyboard") { input.focus(); return; }
+    if (recording) finishTalking(); else startTalking();
   };
+
+  // ---------- keyboard shortcuts (computers) ----------
+  // Hold Space to talk (when you're not typing), Esc to stop, "/" to type.
+  let spaceHeld = false, spaceDown = 0;
+  const typingIn = (el) => el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.isContentEditable);
+  const anyDialogOpen = () => Array.from(document.querySelectorAll("dialog")).some((d) => d.open);
+  function spaceTalks(ev) {
+    if (micMode === "keyboard" || anyDialogOpen() || ev.ctrlKey || ev.metaKey || ev.altKey) return false;
+    const el = document.activeElement;
+    if (recording && (el === input || !typingIn(el))) return true;  // tap again to send, even with words showing
+    if (el === input) return input.value === "" && !attachments.length;
+    return !typingIn(el) && !(el && (el.tagName === "BUTTON" || el.tagName === "SUMMARY" || el.tagName === "A"));
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === " " && (spaceHeld || spaceTalks(ev))) {
+      ev.preventDefault();
+      if (ev.repeat || spaceHeld) return;
+      if (recording) { finishTalking(); return; }  // a tap started it; another tap sends
+      spaceHeld = true;
+      spaceDown = Date.now();
+      startTalking();
+      return;
+    }
+    if (ev.key === "Escape" && !anyDialogOpen()) {
+      if (recording) { spaceHeld = false; finishTalking(true); return; }
+      if (busy || sources.size || ("speechSynthesis" in window && speechSynthesis.speaking)) { ev.preventDefault(); stopEverything(); }
+      return;
+    }
+    if (ev.key === "/" && !typingIn(document.activeElement) && !anyDialogOpen()) {
+      ev.preventDefault();
+      input.focus();
+    }
+  });
+  document.addEventListener("keyup", (ev) => {
+    if (ev.key !== " " || !spaceHeld) return;
+    ev.preventDefault();
+    spaceHeld = false;
+    // held: push-to-talk, send on release. A quick tap: keep listening until you pause.
+    if (Date.now() - spaceDown > 450 && recording) finishTalking();
+  });
 })();
 </script>
 </body>

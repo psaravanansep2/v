@@ -27,9 +27,12 @@ class FakeAgent:
     def __init__(self):
         self.turns = []
         self.cancelled = 0
+        self.skipped_quick = []
 
-    def turn(self, text):
+    def turn(self, text, quick=True):
         self.turns.append(text)
+        if not quick:
+            self.skipped_quick.append(text)
 
     def cancel(self):
         self.cancelled += 1
@@ -105,7 +108,7 @@ def test_page_and_manifest(server):
 def test_text_message_is_queued_for_the_agent(server):
     status, body = request(server, "POST", "/message", b'{"text":"  run the tests "}', auth({"Content-Type": "application/json"}))
     assert status == 200 and json.loads(body)["status"] == "queued"
-    assert server.bridge.inbox.get_nowait() == ("text", "run the tests")
+    assert server.bridge.inbox.get_nowait() == ("text", "run the tests", ())
 
 
 def test_audio_message_is_transcribed_on_the_worker(server):
@@ -289,3 +292,72 @@ def test_certificate_with_a_very_long_computer_name(tmp_path, monkeypatch):
     monkeypatch.setattr(phone.socket, "gethostname", lambda: "x" * 80 + ".local")
     cert, key = phone.self_signed_cert("127.0.0.1", state_dir=tmp_path)
     assert cert.exists() and key.exists()
+
+
+def test_dropped_files_are_saved_and_handed_to_v(server, tmp_path):
+    server.upload_dir = tmp_path / "inbox"
+    headers = auth({"Content-Type": "image/png", "X-Filename": "my%20photo.png"})
+    status, body = request(server, "POST", "/upload", b"\x89PNG...", headers)
+    assert status == 200
+    saved = json.loads(body)
+    assert saved["name"] == "my photo.png" and (tmp_path / "inbox" / "my photo.png").read_bytes() == b"\x89PNG..."
+    again = json.loads(request(server, "POST", "/upload", b"two", headers)[1])
+    assert again["name"] == "my photo (2).png"  # never overwrites
+    assert request(server, "POST", "/upload", b"x", {"X-Filename": "a.txt"})[0] == 401
+
+    reader = EventReader(server)
+    reader.until("replay_end")
+    threading.Thread(target=server.bridge.run_worker, daemon=True).start()
+    message = json.dumps({"text": "what does this say?", "files": [saved["path"]]}).encode()
+    request(server, "POST", "/message", message, auth({"Content-Type": "application/json"}))
+    user = reader.until("user")
+    assert user["text"] == "what does this say?" and user["files"] == ["my photo.png"]
+    time.sleep(0.1)
+    told = server.bridge.agent.turns[-1]
+    assert told.startswith("what does this say?") and saved["path"] in told
+    assert server.bridge.agent.skipped_quick == [told]  # "open this" with a file isn't an instant command
+    request(server, "POST", "/message", json.dumps({"files": [saved["path"]]}).encode(), auth())
+    reader.until("user")
+    time.sleep(0.1)
+    assert server.bridge.agent.turns[-1].startswith("Take a look at this file.")
+    server.bridge.stop()
+    reader.close()
+
+
+def test_uploads_cant_escape_the_folder(tmp_path):
+    for name in ("../../etc/passwd", "..\\..\\boot.ini", "/abs/path.txt", "..", "CON.txt", "a<b>:c?.txt"):
+        saved = phone.save_upload(tmp_path, name, b"x")
+        assert saved.parent == tmp_path, name
+    names = sorted(p.name for p in tmp_path.iterdir())
+    assert "passwd" in names and "boot.ini" in names and "path.txt" in names and "_CON.txt" in names
+    assert (tmp_path / ".gitignore").read_text() == "*\n"  # copies don't end up in the project's git history
+
+
+def test_goal_and_timer_controls(server):
+    goals, cancelled = [], []
+    server.on_goal = goals.append
+    server.on_cancel_timer = lambda timer_id: cancelled.append(timer_id) or timer_id == "abc"
+    assert request(server, "POST", "/goal", json.dumps({"goal": "  Launch the shop  "}).encode(), auth())[0] == 200
+    assert goals == ["Launch the shop"]
+    assert request(server, "POST", "/timer/cancel", b'{"id": "abc"}', auth())[0] == 200
+    assert request(server, "POST", "/timer/cancel", b'{"id": "zzz"}', auth())[0] == 404
+    assert cancelled == ["abc", "zzz"]
+    assert request(server, "POST", "/goal", b'{"goal": "x"}', {"Content-Type": "application/json"})[0] == 401
+
+
+def test_hello_carries_the_server_clock(server):
+    reader = EventReader(server)
+    hello = reader.next()
+    assert abs(hello["now"] - time.time() * 1000) < 5000  # the page corrects countdowns for clock drift
+    reader.close()
+
+
+def test_timers_and_activity_reach_the_page():
+    hub, media = phone.Hub(), phone.MediaStore()
+    q, _ = hub.subscribe()
+    ui = phone.PhoneUI(hub, media)
+    ui.timers([{"id": "a", "label": "10 minute timer", "kind": "timer", "ends": 1}])
+    assert q.get_nowait()["items"][0]["label"] == "10 minute timer"
+    ui.activity("opened Spotify")
+    event = q.get_nowait()
+    assert event["text"] == "opened Spotify" and abs(event["at"] - time.time() * 1000) < 5000

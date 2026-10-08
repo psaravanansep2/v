@@ -27,6 +27,21 @@ class _Quiet:
         return lambda *args: self.events.append((name, *args))
 
 
+def sample_font(size: int):
+    """A font that exists on this computer, for drawing test text."""
+    from PIL import ImageFont
+
+    for name in ("DejaVuSans.ttf", "Arial.ttf", "arial.ttf", "Helvetica.ttc", "LiberationSans-Regular.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=size)  # Pillow 10.1+: a scalable built-in font
+    except TypeError:
+        return ImageFont.load_default()
+
+
 def run_check(url=None, model=None, log: Callable[[str], None] = print) -> int:
     from .local import LocalClient, LocalError, ensure_server
     from .local_agent import LocalAgent
@@ -105,24 +120,11 @@ def run_check(url=None, model=None, log: Callable[[str], None] = print) -> int:
     # 5. optional pieces
     try:
         import numpy as np
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
         from rapidocr_onnxruntime import RapidOCR
 
         image = Image.new("RGB", (480, 120), "white")
-        draw = ImageDraw.Draw(image)
-        font = None
-        for name in ("DejaVuSans.ttf", "Arial.ttf", "arial.ttf", "Helvetica.ttc", "LiberationSans-Regular.ttf"):
-            try:
-                font = ImageFont.truetype(name, 40)
-                break
-            except OSError:
-                continue
-        if font is None:
-            try:
-                font = ImageFont.load_default(size=40)  # Pillow 10.1+: a scalable built-in font
-            except TypeError:
-                font = ImageFont.load_default()
-        draw.text((20, 30), "Subscribe", fill="black", font=font)
+        ImageDraw.Draw(image).text((20, 30), "Subscribe", fill="black", font=sample_font(40))
         found, _ = RapidOCR()(np.array(image))
         texts = [t for _, t, _ in found or []]
         report(any("subscribe" in t.lower() for t in texts), "reads the screen (OCR)", f"saw {texts}")

@@ -82,6 +82,7 @@ def _parser() -> argparse.ArgumentParser:
     command("app", "open v in its own window (and for your phone)").add_argument(
         "--background", action="store_true", help=argparse.SUPPRESS)
     command("install-shortcut", "put a v icon on the desktop / in the app menu")
+    command("screen-test", "check that v can see your screen and move the pointer (it never clicks)")
     ev = command("eval", "score a model on everyday tasks with v's real tools (files, web, screen, ...)")
     ev.add_argument("--families", help="comma-separated kinds of task (default: all): " + "read, find, write, edit, docx, "
                     "photo, count, web, click, form, goal, open, refuse, question, todo")
@@ -174,15 +175,25 @@ def _stop_sessions(sessions) -> None:
         sessions.stop_all()
 
 
-def _computer(cfg: Config):
+def _computer(cfg: Config, log=print):
     if not cfg.computer:
         return None
     try:
+        from .wayland import is_wayland
+
+        if is_wayland():  # Wayland: through the desktop's remote-control permission
+            from .wayland import PortalDenied, wayland_computer
+
+            try:
+                return wayland_computer(log=log)
+            except PortalDenied:
+                log("Screen control is off: the desktop's permission wasn't given. Restart v to be asked again.")
+                return None
         from .computer import Computer
 
         return Computer()
     except Exception as e:
-        print(f"(screen control unavailable: {e.__class__.__name__}: {e})")
+        log(f"(screen control unavailable: {e.__class__.__name__}: {e})")
         return None
 
 
@@ -195,6 +206,10 @@ def cmd_setup(args) -> int:
     print(f"Best free model for it: {report.choice.name} (~{report.choice.download_gb:.0f} GB download).")
     for note in report.notes:
         print(f"  {note}")
+    from .system import linux_report
+
+    for line in linux_report():
+        print(line)
     try:
         server = ensure_server(print, url=args.local_url, model=args.local_model)
     except LocalError as e:
@@ -258,6 +273,11 @@ def cmd_doctor(args) -> int:
     def screen_control():
         if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
             raise RuntimeError("no DISPLAY set; run v from a desktop session to use screen control")
+        from .wayland import is_wayland
+
+        if is_wayland():
+            imports("jeepney", "PIL")()
+            return "Wayland: v asks your desktop for permission when it starts (try it: v screen-test)"
         from .computer import import_pyautogui
 
         gui = import_pyautogui()
@@ -309,7 +329,63 @@ def cmd_doctor(args) -> int:
         print("  ok   natural voice (Kokoro)")
     except ImportError:
         print("  --   natural voice (Kokoro): optional; install with V_KOKORO=1")
-    _check("screen control (pyautogui, mss, pillow)", screen_control)
+    _check("screen control", screen_control)
+    from .system import linux_report
+
+    report = linux_report()
+    if report:
+        print(" this Linux computer")
+        for line in report:
+            print(f"  {line}")
+    return 0
+
+
+def cmd_screen_test(args) -> int:
+    """Checks, step by step, that v can see the screen and move the pointer (it never clicks)."""
+    import time as _time
+
+    from .wayland import is_wayland
+
+    print("v screen-test: can v see and use this screen?\n")
+    if is_wayland():
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "unknown desktop")
+        print(f"  ok   Wayland session ({desktop})")
+        from .wayland import grab as grab_screen
+    else:
+        print(f"  ok   {'X11' if sys.platform.startswith('linux') else sys.platform} session")
+        from .computer import _default_grab as grab_screen
+    try:
+        image = grab_screen()
+        out = Path.home() / "v-screen-test.png"
+        image.save(out)
+        print(f"  ok   screenshot: {image.width}x{image.height} (saved to {out})")
+    except Exception as e:
+        print(f"  FAIL screenshot: {e}")
+        return 1
+    try:
+        from .tools import ocr_engine
+
+        import numpy as np
+
+        found = [t for _, t, score in (ocr_engine()(np.array(image))[0] or []) if float(score) >= 0.5]
+        sample = ", ".join(f"“{t}”" for t in found[:5])
+        print(f"  ok   reading it: {len(found)} pieces of text" + (f", e.g. {sample}" if sample else ""))
+    except ImportError:
+        print("  --   reading it: the OCR add-on isn't installed")
+    cfg = _config(args)
+    cfg.computer = True
+    print("  ...  getting control of the pointer" + (" (your desktop may ask: choose your screen, then Allow)" if is_wayland() else ""))
+    computer = _computer(cfg, log=lambda line: print(f"       {line}"))
+    if computer is None:
+        print("  FAIL control: not available (see above)")
+        return 1
+    print(f"  ok   control: a {computer.width}x{computer.height} screen")
+    cx, cy = computer.width // 2, computer.height // 2
+    for dx, dy in ((-60, -60), (60, -60), (60, 60), (-60, 60), (0, 0)):
+        computer.gui.moveTo(cx + dx, cy + dy)
+        _time.sleep(0.15)
+    print("  ok   pointer: drew a small square in the middle of the screen (did you see it move?)")
+    print("\nIf the pointer moved, v can use this screen.")
     return 0
 
 
@@ -418,6 +494,8 @@ def main(argv=None) -> int:
         return cmd_setup(args)
     if args.cmd == "app":
         return cmd_app(args)
+    if args.cmd == "screen-test":
+        return cmd_screen_test(args)
     if args.cmd == "install-shortcut":
         return cmd_install_shortcut(args)
     if args.cmd == "eval":

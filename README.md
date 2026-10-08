@@ -101,7 +101,7 @@ of the command (a bigger download).
 Platform notes:
 
 - **macOS:** the first time v uses the screen, allow it under System Settings → Privacy & Security → *Accessibility* and *Screen Recording*.
-- **Linux:** screen control needs an X11 session.
+- **Linux:** works on X11 and Wayland (KDE Plasma, GNOME, Sway, Hyprland). On Wayland, v asks your desktop for permission to control the screen the first time (choose your screen, then Allow). Check it with `v screen-test`: it takes a screenshot and moves the pointer in a small square, without clicking anything. `v doctor` prints the one command your distribution needs for the optional extras (talking in the terminal, copy and paste), such as `sudo dnf install ...` on Fedora and Nobara.
 
 Check that everything works with a short real conversation with your model:
 

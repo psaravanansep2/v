@@ -152,7 +152,7 @@ def run(cfg: Config, args, window: bool) -> int:
             voice.synth = KokoroEngine(cfg.voice)
         except Exception as e:
             print(f"(Kokoro voice unavailable: {e.__class__.__name__}; the browser's own voice will be used)")
-        computer_box["computer"] = _computer(cfg)
+        computer_box["computer"] = _computer(cfg, log=set_status)  # on Wayland the desktop may ask for permission
         set_status("Getting the free AI model ready…")
         try:
             assistant, sessions, label = _make_brain(

@@ -19,7 +19,7 @@ voice = ["numpy", "sounddevice", "faster-whisper", "pyttsx3"]
 # separate, and Kokoro doesn't support Python 3.13 yet.
 kokoro = ["kokoro>=0.9.4; python_version < '3.13'"]
 # Screenshots + mouse/keyboard control.
-computer = ["pyautogui", "mss", "pillow"]
+computer = ["pyautogui", "mss", "pillow", "jeepney>=0.8; sys_platform == 'linux'"]
 # Use a phone as v's mic, speaker and screen: QR code + HTTPS certificate.
 phone = ["qrcode", "cryptography"]
 # v's own model runner (not needed with Ollama or LM Studio). A zip archive,
@@ -28,7 +28,7 @@ local = ["cheapstack @ https://github.com/psaravanansep2/cheapstack/archive/refs
 # Reading text off the screen, and reading PDFs.
 free = ["rapidocr_onnxruntime", "pypdf", "pillow", "pillow-heif"]
 all = ["v[voice,computer,phone,local,free]"]
-dev = ["pytest"]
+dev = ["pytest", "jeepney>=0.8; sys_platform == 'linux'"]
 
 [project.scripts]
 v = "v.cli:main"

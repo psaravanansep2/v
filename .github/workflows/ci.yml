@@ -143,7 +143,7 @@ jobs:
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           (ollama serve > /tmp/ollama.log 2>&1 &) ; sleep 5
-          ollama pull qwen3:4b
+          ollama pull qwen3:4b-instruct-2507-q4_K_M
       - name: llama.cpp release downloads (for the record)
         if: matrix.runner == 'llama.cpp'
         run: |
@@ -152,7 +152,7 @@ jobs:
       - name: v check with a real model
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: v check --local-model qwen3:4b
+        run: v check --local-model ${{ matrix.runner == 'ollama' && 'qwen3:4b-instruct-2507-q4_K_M' || 'qwen3:4b' }}
       - name: v eval with a real model (everyday tasks; a measurement, not a pass/fail gate)
         # on v's own llama.cpp runner, which reuses what it already read (on this CPU-only machine,
         # Ollama re-reads the whole conversation each step and the tasks don't fit in the time)

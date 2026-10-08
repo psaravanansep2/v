@@ -273,6 +273,14 @@ def test_accumulator_separates_calls_sent_without_index():
     assert [json.loads(c["function"]["arguments"])["target"] for c in calls] == ["a", "b"]
 
 
+def test_prefers_the_editions_that_answer_without_long_thinking():
+    assert local.pick_ollama_model(["qwen3:4b-thinking-2507-q4_K_M", "qwen3:4b-instruct-2507-q4_K_M"]) == \
+        "qwen3:4b-instruct-2507-q4_K_M"
+    assert local.pick_ollama_model(["qwen3:30b-a3b-thinking-2507-q4_K_M", "qwen3:8b"]) == "qwen3:8b"
+    assert local.pick_ollama_model(["qwen3:4b"]) == "qwen3:4b"  # what's there, rather than a surprise download
+    assert local.model_for_tag("qwen3:4b").name == "Qwen3 4B" and local.model_for_tag("qwen3:14b") is None
+
+
 def test_finds_ollama_and_its_best_installed_model(server, monkeypatch):
     srv = server(tags=["llama3.2:3b", "qwen3:8b", "nomic-embed-text:latest"])
     monkeypatch.setattr(local, "OLLAMA_URL", srv.url)
@@ -290,8 +298,8 @@ def test_ensure_server_pulls_a_model_into_ollama(server, monkeypatch):
     monkeypatch.setattr(local, "choose_model", lambda budget=None: local.MODELS[-1])
     logs = []
     found = local.ensure_server(logs.append)
-    assert srv.pulled == ["qwen3:4b"]
-    assert found.kind == "ollama" and found.model == "qwen3:4b"
+    assert srv.pulled == ["qwen3:4b-instruct-2507-q4_K_M"]  # the edition that answers without long "thinking"
+    assert found.kind == "ollama" and found.model == "qwen3:4b-instruct-2507-q4_K_M"
     assert any("50%" in line for line in logs)
 
 

@@ -72,7 +72,7 @@ class ModelChoice:
 MODELS = [
     ModelChoice(
         "Qwen3 235B-A22B",
-        "qwen3:235b",
+        "qwen3:235b-a22b-instruct-2507-q4_K_M",
         ("unsloth/Qwen3-235B-A22B-Instruct-2507-GGUF", "Qwen/Qwen3-235B-A22B-GGUF"),
         "Q4_K_M",
         142,
@@ -92,7 +92,7 @@ MODELS = [
     ),
     ModelChoice(
         "Qwen3 30B-A3B",
-        "qwen3:30b",
+        "qwen3:30b-a3b-instruct-2507-q4_K_M",
         ("unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF", "Qwen/Qwen3-30B-A3B-GGUF"),
         "Q4_K_M",
         18.6,
@@ -119,7 +119,7 @@ MODELS = [
     ),
     ModelChoice(
         "Qwen3 4B",
-        "qwen3:4b",
+        "qwen3:4b-instruct-2507-q4_K_M",
         ("unsloth/Qwen3-4B-Instruct-2507-GGUF", "Qwen/Qwen3-4B-GGUF"),
         "Q4_K_M",
         2.5,
@@ -204,7 +204,8 @@ def _tokens(tag: str) -> list[str]:
 
 
 def _matches(tag: str, model: ModelChoice) -> bool:
-    family, size = model.ollama.split(":")
+    family, rest = model.ollama.split(":")
+    size = rest.split("-")[0]
     return family in tag.lower() and size in _tokens(tag)  # "4b" must not match "14b"
 
 
@@ -457,9 +458,12 @@ def ollama_models() -> Optional[list[str]]:
 
 def pick_ollama_model(installed: list[str]) -> Optional[str]:
     for model in MODELS:
-        for name in installed:
-            if _matches(name, model):
-                return name
+        # the exact edition v asks for first: plain qwen3 tags can be "thinking" editions, which
+        # reason for hundreds of words before every answer (minutes per step without a GPU)
+        exact = [name for name in installed if name == model.ollama]
+        others = [name for name in installed if _matches(name, model) and "thinking" not in name.lower()]
+        if exact or others:
+            return (exact or others)[0]
     for name in installed:  # anything else from a tool-capable family
         if any(f in name for f in ("qwen3", "gpt-oss", "qwen2.5", "llama3.1", "llama3.2", "mistral")):
             return name

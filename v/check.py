@@ -77,7 +77,7 @@ def run_check(url=None, model=None, log: Callable[[str], None] = print) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         word = f"{secrets.choice(['pineapple', 'lighthouse', 'saxophone', 'origami'])}-{secrets.randbelow(9000) + 1000}"
-        (project / "secret.txt").write_text(f"The secret word is {word}.\n")
+        (project / "secret.txt").write_text(f"The secret word is {word}.\n", encoding="utf-8")
         cfg = Config(project_dir=project, confirm="none")
         ui, spoken = _Quiet(), []
         agent = LocalAgent(client, cfg, spoken.append, Toolbox(cfg, Confirmer("none", lambda q: "yes"), ui), ui=ui)
@@ -93,7 +93,7 @@ def run_check(url=None, model=None, log: Callable[[str], None] = print) -> int:
         t0 = time.time()
         agent.turn("Create a file called hello.txt that contains the text: hi from v")
         made = project / "hello.txt"
-        ok = made.exists() and "hi from v" in made.read_text().lower()
+        ok = made.exists() and "hi from v" in made.read_text(encoding="utf-8", errors="replace").lower()
         report(ok, "uses tools (writes a file)", f"{time.time() - t0:.1f}s" if ok else "hello.txt wasn't written as asked")
 
     # 4. instant commands (no model)

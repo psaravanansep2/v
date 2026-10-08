@@ -258,3 +258,34 @@ def test_certificate_is_remade_when_the_address_changes(tmp_path):
     first = cert.read_bytes()
     phone.self_signed_cert("10.0.0.5", state_dir=tmp_path)
     assert cert.read_bytes() != first
+
+
+def test_a_second_launch_finds_the_running_app(server, tmp_path, monkeypatch):
+    from v import serve
+
+    app_file = tmp_path / "app.json"
+    monkeypatch.setattr(serve, "APP_FILE", app_file)
+    assert serve.running_app_url() is None  # nothing recorded
+    url = f"http://127.0.0.1:{server.server_address[1]}/?t={TOKEN}"
+    app_file.write_text(json.dumps({"local_url": url}))
+    assert serve.running_app_url() == url
+    app_file.write_text(json.dumps({"local_url": "http://127.0.0.1:9/?t=x"}))  # stale: v isn't running
+    assert serve.running_app_url() is None
+
+
+def test_messages_before_setup_finishes_get_a_clear_answer(server):
+    reader = EventReader(server)
+    reader.until("replay_end")
+    server.bridge.agent = None
+    server.bridge.not_ready = "I couldn't finish setting up: no internet."
+    threading.Thread(target=server.bridge.run_worker, daemon=True).start()
+    request(server, "POST", "/message", b'{"text":"hi"}', auth({"Content-Type": "application/json"}))
+    assert reader.until("notice")["text"] == "I couldn't finish setting up: no internet."
+    server.bridge.stop()
+    reader.close()
+
+
+def test_certificate_with_a_very_long_computer_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(phone.socket, "gethostname", lambda: "x" * 80 + ".local")
+    cert, key = phone.self_signed_cert("127.0.0.1", state_dir=tmp_path)
+    assert cert.exists() and key.exists()

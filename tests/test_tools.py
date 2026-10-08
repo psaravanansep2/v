@@ -234,3 +234,13 @@ def test_click_with_numbers_as_text_and_implied_arguments(tmp_path):
     tb.run("look_at_screen", {})
     assert tb.run("double_click", {"element_id": "3"}).startswith("Clicked at 900,600")
     assert gui.calls[-1][2]["clicks"] == 2
+
+
+def test_files_keep_their_line_endings_and_unicode(tmp_path):
+    tb = toolbox(tmp_path)
+    crlf = tmp_path / "project" / "windows.txt"
+    crlf.write_bytes("first line\r\nsecond line\r\ncafé\r\n".encode("utf-8"))
+    assert tb.run("edit_file", {"path": "windows.txt", "old_text": "first line\nsecond", "new_text": "1st line\n2nd"}).startswith("Edited")
+    assert crlf.read_bytes() == "1st line\r\n2nd line\r\ncafé\r\n".encode("utf-8")  # still CRLF, nothing else touched
+    tb.run("write_file", {"path": "notes.txt", "content": "Zürich\nnaïve"})
+    assert (tmp_path / "project" / "notes.txt").read_bytes() == "Zürich\nnaïve".encode("utf-8")

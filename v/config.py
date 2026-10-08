@@ -47,7 +47,7 @@ def goal_path(project_dir: Path) -> Path:
 
 def load_goal(project_dir: Path) -> str:
     try:
-        return goal_path(project_dir).read_text().strip()
+        return goal_path(project_dir).read_text(encoding="utf-8").strip()
     except OSError:
         return ""
 
@@ -55,4 +55,4 @@ def load_goal(project_dir: Path) -> str:
 def save_goal(project_dir: Path, goal: str) -> None:
     path = goal_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(goal.strip() + "\n")
+    path.write_text(goal.strip() + "\n", encoding="utf-8")

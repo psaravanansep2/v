@@ -320,7 +320,7 @@ class QuickCommands:
 
     def settings(self) -> dict:
         try:
-            return json.loads(self._settings_path().read_text())
+            return json.loads(self._settings_path().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
@@ -328,7 +328,7 @@ class QuickCommands:
         data = self.settings()
         data[key] = value
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self._settings_path().write_text(json.dumps(data, indent=2))
+        self._settings_path().write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def gui(self):
         if self._gui is None:
@@ -507,13 +507,13 @@ class QuickCommands:
         note = m.group("note").strip()
         path = self.notes_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(f"- {self.now():%Y-%m-%d %H:%M} — {note}\n")
         return "Noted."
 
     def _read_notes(self, m):
         try:
-            lines = [ln for ln in self.notes_path().read_text().splitlines() if ln.startswith("- ")]
+            lines = [ln for ln in self.notes_path().read_text(encoding="utf-8").splitlines() if ln.startswith("- ")]
         except OSError:
             lines = []
         if not lines:

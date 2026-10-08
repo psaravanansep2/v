@@ -295,8 +295,13 @@ def cmd_doctor(args) -> int:
     print(" voice and screen")
     _check("speech recognition (faster-whisper)", imports("faster_whisper"))
     _check("microphone", microphone)
-    if not _check("Kokoro voice", imports("kokoro")):
-        _check("fallback voice (pyttsx3)", imports("pyttsx3"))
+    if not _check("built-in voice (pyttsx3)", imports("pyttsx3")):
+        print("        (in v's window and on phones, the browser speaks instead)")
+    try:
+        __import__("kokoro")
+        print("  ok   natural voice (Kokoro)")
+    except ImportError:
+        print("  --   natural voice (Kokoro): optional; install with V_KOKORO=1")
     _check("screen control (pyautogui, mss, pillow)", screen_control)
     return 0
 

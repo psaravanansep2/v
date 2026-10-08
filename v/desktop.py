@@ -108,9 +108,9 @@ def install_shortcut(platform: str = sys.platform, home: Optional[Path] = None, 
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>v listens when you talk to it.</string>
 </dict></plist>
-""")
+""", encoding="utf-8")
         launcher = app / "MacOS" / "v"
-        launcher.write_text("#!/bin/bash\nexec " + " ".join(f'"{c}"' for c in command) + ' "$@"\n')
+        launcher.write_text("#!/bin/bash\nexec " + " ".join(f'"{c}"' for c in command) + ' "$@"\n', encoding="utf-8")
         launcher.chmod(0o755)
         draw_icon(512).save(app / "Resources" / "v.icns")
         created.append(app.parent)
@@ -145,12 +145,12 @@ def install_shortcut(platform: str = sys.platform, home: Optional[Path] = None, 
     )
     menu = home / ".local/share/applications/v.desktop"
     menu.parent.mkdir(parents=True, exist_ok=True)
-    menu.write_text(entry)
+    menu.write_text(entry, encoding="utf-8")
     created.append(menu)
     desktop = home / "Desktop"
     if desktop.is_dir():
         on_desktop = desktop / "v.desktop"
-        on_desktop.write_text(entry)
+        on_desktop.write_text(entry, encoding="utf-8")
         on_desktop.chmod(0o755)
         if shutil.which("gio"):
             subprocess.run(["gio", "set", str(on_desktop), "metadata::trusted", "true"], capture_output=True)

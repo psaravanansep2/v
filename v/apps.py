@@ -172,7 +172,7 @@ def _desktop_name(path: Path) -> Optional[str]:
     """The Name= of a Linux .desktop file, unless it's hidden."""
     name = None
     try:
-        for line in path.read_text(errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if line.startswith("[") and line.strip() != "[Desktop Entry]":
                 break
             if line.startswith("Name=") and name is None:
@@ -197,7 +197,7 @@ def launch(target: str) -> None:
             subprocess.Popen(["gtk-launch", Path(target).stem], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
             return
-        for line in Path(target).read_text(errors="replace").splitlines():
+        for line in Path(target).read_text(encoding="utf-8", errors="replace").splitlines():
             if line.startswith("Exec="):
                 argv = [a for a in line[5:].split() if not a.startswith("%")]
                 subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

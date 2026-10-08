@@ -370,3 +370,35 @@ def test_unknown_names_in_text_are_not_treated_as_calls(tmp_path, server):
     agent.turn("show me the record")
     assert "tool_calls" not in agent.history[-1]
     assert spoken == ['{"name": "Ada", "role": "engineer"}']
+
+
+OLD_STYLE = ["llama-b6000-bin-ubuntu-x64.zip", "llama-b6000-bin-ubuntu-vulkan-x64.zip", "llama-b6000-bin-macos-arm64.zip",
+             "llama-b6000-bin-macos-x64.zip", "llama-b6000-bin-win-cpu-x64.zip", "llama-b6000-bin-win-cuda-12.4-x64.zip",
+             "llama-b6000-bin-win-vulkan-x64.zip", "llama-b6000-bin-win-cpu-arm64.zip", "cudart-llama-bin-win-cuda-12.4-x64.zip",
+             "llama-b6000-xcframework.zip"]
+NEW_STYLE = ["llama-b7000-bin-linux-x64.tar.gz", "llama-b7000-bin-linux-vulkan-x64.tar.gz", "llama-b7000-bin-linux-arm64.tar.gz",
+             "llama-b7000-bin-macos-arm64.tar.gz", "llama-b7000-bin-win-cpu-x64.zip", "llama-b7000-bin-win-hip-radeon-x64.zip",
+             "llama-b7000-bin-ubuntu-rocm-7.0-x64.tar.gz"]
+
+
+@pytest.mark.parametrize(
+    "names,platform,machine,vulkan,expected",
+    [
+        (OLD_STYLE, "linux", "x86_64", False, "llama-b6000-bin-ubuntu-x64.zip"),
+        (OLD_STYLE, "linux", "x86_64", True, "llama-b6000-bin-ubuntu-vulkan-x64.zip"),
+        (OLD_STYLE, "darwin", "arm64", False, "llama-b6000-bin-macos-arm64.zip"),
+        (OLD_STYLE, "win32", "AMD64", False, "llama-b6000-bin-win-cpu-x64.zip"),
+        (OLD_STYLE, "win32", "ARM64", False, "llama-b6000-bin-win-cpu-arm64.zip"),
+        (NEW_STYLE, "linux", "x86_64", False, "llama-b7000-bin-linux-x64.tar.gz"),
+        (NEW_STYLE, "linux", "aarch64", False, "llama-b7000-bin-linux-arm64.tar.gz"),
+        (NEW_STYLE, "darwin", "arm64", False, "llama-b7000-bin-macos-arm64.tar.gz"),
+    ],
+)
+def test_picks_the_right_llama_cpp_download(names, platform, machine, vulkan, expected):
+    assets = [{"name": n} for n in names]
+    assert local.pick_llama_asset(assets, platform, machine, vulkan)["name"] == expected
+
+
+def test_no_matching_download_lists_what_was_there():
+    with pytest.raises(local.LocalError, match="assets: llama-b1-bin-plan9-x64.zip"):
+        local.pick_llama_asset([{"name": "llama-b1-bin-plan9-x64.zip"}], "linux", "x86_64")

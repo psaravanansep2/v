@@ -492,6 +492,54 @@ def download_with_progress(url: str, dest: Path, log, expected_size: Optional[in
     return dest
 
 
+LLAMA_RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+_OS_TOKENS = {"linux": {"ubuntu", "linux"}, "darwin": {"macos", "darwin", "osx", "mac"}, "win": {"win", "windows"}}
+_ARCH_TOKENS = {"x64": {"x64", "x86", "amd64", "x86_64"}, "arm64": {"arm64", "aarch64"}}
+# builds that need a particular GPU runtime installed; v uses the plain build (or Vulkan)
+_RUNTIME_BUILDS = {"cuda", "cu11", "cu12", "cu13", "rocm", "hip", "sycl", "openvino", "opencl", "musa", "kompute",
+                   "cann", "npu", "vulkan", "xcframework", "radeon", "intel"}
+
+
+def _asset_tokens(name: str) -> set:
+    return set(re.split(r"[-_.+]", name.lower()))
+
+
+def pick_llama_asset(assets: list, platform: str = sys.platform, machine: str = platform.machine(),
+                     prefer_vulkan: bool = False) -> dict:
+    """The llama.cpp release download for this computer, matched by name parts
+    so a renamed asset ("ubuntu" -> "linux", ".zip" -> ".tar.gz") still matches."""
+    os_key = "darwin" if platform == "darwin" else "win" if platform.startswith("win") else "linux"
+    arch = "arm64" if machine.lower() in ("arm64", "aarch64") else "x64"
+    fitting = []
+    for asset in assets:
+        name = asset.get("name", "").lower()
+        tokens = _asset_tokens(name)
+        if not name.endswith((".zip", ".tar.gz", ".tgz")) or "bin" not in tokens:
+            continue
+        if not tokens & _OS_TOKENS[os_key] or not tokens & _ARCH_TOKENS[arch]:
+            continue
+        fitting.append((asset, tokens))
+    if prefer_vulkan:
+        for asset, tokens in fitting:
+            if "vulkan" in tokens:
+                return asset
+    plain = [(a, t) for a, t in fitting if not t & _RUNTIME_BUILDS]
+    if not plain:
+        names = ", ".join(a.get("name", "") for a in assets[:40])
+        raise LocalError(f"no llama.cpp download for {os_key}-{arch} in the latest release (assets: {names})")
+    plain.sort(key=lambda at: ("cpu" not in at[1], len(at[0]["name"])))  # an explicit CPU build, else the plainest name
+    return plain[0][0]
+
+
+def _latest_llama_release() -> dict:
+    headers = {"User-Agent": "v", "Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:  # optional: avoids GitHub's hourly limit for anonymous requests on shared machines
+        headers["Authorization"] = f"Bearer {token}"
+    with urllib.request.urlopen(urllib.request.Request(LLAMA_RELEASES, headers=headers), timeout=20) as resp:
+        return json.load(resp)
+
+
 def _server_info_path() -> Path:
     return STATE_DIR / "server.json"
 
@@ -523,7 +571,8 @@ def _start_llama_server(choice: ModelChoice, log) -> LocalServer:
         binary = binaries[0]
     else:
         log("Fetching llama.cpp (one time)…")
-        asset = release.pick_asset(release.fetch_latest_release(), prefer_gpu=gpu_memory_gb() > 0)
+        asset = pick_llama_asset(_latest_llama_release().get("assets", []), prefer_vulkan=gpu_memory_gb() > 0)
+        log(f"  {asset['name']}")
         binary = release.download_and_extract(asset, bin_dir)
 
     model_path = None
@@ -562,7 +611,7 @@ def _start_llama_server(choice: ModelChoice, log) -> LocalServer:
             raise LocalError(f"llama-server exited while loading {choice.name} (code {proc.returncode})")
         health = _get_json(f"http://127.0.0.1:{V_SERVER_PORT}/health", timeout=1)
         if isinstance(health, dict) and health.get("status") == "ok":
-            _server_info_path().write_text(json.dumps({"pid": proc.pid, "model": alias}))
+            _server_info_path().write_text(json.dumps({"pid": proc.pid, "model": alias}), encoding="utf-8")
             return LocalServer(f"http://127.0.0.1:{V_SERVER_PORT}/v1", alias, "llama.cpp", choice)
         time.sleep(0.5)
     proc.terminate()
@@ -596,7 +645,7 @@ def ensure_server(log: Callable[[str], None] = print, url: Optional[str] = None,
 
 def stop_own_server() -> bool:
     try:
-        info = json.loads(_server_info_path().read_text())
+        info = json.loads(_server_info_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     try:

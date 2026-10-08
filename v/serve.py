@@ -23,7 +23,7 @@ APP_FILE = STATE_DIR / "app.json"
 def running_app_url() -> str | None:
     """The window address of a v app that's already running, if any."""
     try:
-        info = json.loads(APP_FILE.read_text())
+        info = json.loads(APP_FILE.read_text(encoding="utf-8"))
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
             info["local_url"].split("?")[0] + "health", timeout=1.5
         ) as resp:
@@ -164,7 +164,7 @@ def run(cfg: Config, args, window: bool) -> int:
         from .desktop import open_window
 
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        APP_FILE.write_text(json.dumps({"local_url": local_url}))
+        APP_FILE.write_text(json.dumps({"local_url": local_url}), encoding="utf-8")
         open_window(local_url)
         print(f"v's window: {local_url}")
     print("Ctrl+C to stop.\n", flush=True)

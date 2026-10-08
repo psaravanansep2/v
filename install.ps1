@@ -39,7 +39,12 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 Step '2/4  Installing v...'
 uv tool install --force --python $PythonVersion "v[$Extras] @ $Source"
 if ($LASTEXITCODE -ne 0) { throw 'Installing v failed (see above). Check the internet connection and try again.' }
-uv tool update-shell 2>$null | Out-Null
+# Make sure new terminals find v. uv prints notes on stderr, which Windows
+# PowerShell would otherwise treat as an error, so let them pass quietly.
+$ErrorActionPreference = 'Continue'
+& uv tool update-shell *> $null
+$ErrorActionPreference = 'Stop'
+$env:Path = "$(& uv tool dir --bin);$env:Path"
 
 if ($env:V_SKIP_MODEL -ne '1') {
     Step '3/4  Getting the free AI model ready (one time; this can take a while)...'

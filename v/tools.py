@@ -471,13 +471,15 @@ class Toolbox:
         if not self._may_write(p, "Write the file"):
             return "The user declined this change."
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
+        write_exact(p, content)
         self.ui.activity(f"wrote {p}")
         return f"Wrote {len(content):,} characters to {p}."
 
     def t_edit_file(self, path: str, old_text: str, new_text: str) -> str:
         p = self._path(path)
-        text = p.read_text()
+        text = read_exact(p)
+        if old_text not in text and "\r\n" in text:
+            old_text, new_text = old_text.replace("\n", "\r\n"), new_text.replace("\n", "\r\n")  # a Windows-style file
         count = text.count(old_text)
         if count == 0:
             return "Error: old_text wasn't found in the file. Read the file and copy the text exactly."
@@ -485,7 +487,7 @@ class Toolbox:
             return f"Error: old_text appears {count} times; include more surrounding text so it's unique."
         if not self._may_write(p, "Edit the file"):
             return "The user declined this change."
-        p.write_text(text.replace(old_text, new_text, 1))
+        write_exact(p, text.replace(old_text, new_text, 1))
         self.ui.activity(f"edited {p}")
         return f"Edited {p}."
 
@@ -550,6 +552,17 @@ class Toolbox:
 
     def t_scroll(self, direction: str, amount: int = 5) -> str:
         return self.screen.scroll(direction, amount)
+
+
+def read_exact(p: Path) -> str:
+    """A text file exactly as it is: UTF-8, line endings untouched."""
+    return p.read_bytes().decode("utf-8", errors="replace")
+
+
+def write_exact(p: Path, text: str) -> None:
+    """Write UTF-8 without translating line endings (Windows would turn \\n into \\r\\n)."""
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
 
 
 def read_pdf(p: Path, max_pages: int = 50) -> str:

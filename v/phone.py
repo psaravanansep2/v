@@ -510,14 +510,14 @@ def load_token(new: bool = False, state_dir: Path = STATE_DIR) -> str:
     path = state_dir / "token"
     if not new:
         try:
-            token = path.read_text().strip()
+            token = path.read_text(encoding="utf-8").strip()
             if len(token) >= 16:
                 return token
         except OSError:
             pass
     state_dir.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(18)
-    path.write_text(token + "\n")
+    path.write_text(token + "\n", encoding="utf-8")
     os.chmod(path, 0o600)
     return token
 
@@ -544,7 +544,7 @@ def self_signed_cert(ip: str, state_dir: Path = STATE_DIR) -> tuple[Path, Path]:
 
     state_dir.mkdir(parents=True, exist_ok=True)
     key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"v on {socket.gethostname()}")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"v on {socket.gethostname()}"[:64])])
     now = datetime.now(timezone.utc)
     alt_names = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
     if ip != "127.0.0.1":

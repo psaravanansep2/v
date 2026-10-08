@@ -143,7 +143,8 @@ def test_ollama_native_api_with_context_size(tmp_path, server):
         [
             [
                 {"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "read_file", "arguments": {"path": "a.txt"}}}]}, "done": False},
-                {"message": {"role": "assistant", "content": ""}, "done": True, "prompt_eval_count": 1200, "prompt_eval_duration": 2_000_000_000},
+                {"message": {"role": "assistant", "content": ""}, "done": True, "prompt_eval_count": 1200, "prompt_eval_duration": 2_000_000_000,
+                 "eval_count": 30, "eval_duration": 1_500_000_000, "load_duration": 3_000_000_000},
             ],
             [
                 {"message": {"role": "assistant", "content": "It says hello."}, "done": False},
@@ -165,16 +166,21 @@ def test_ollama_native_api_with_context_size(tmp_path, server):
     assert spoken == ["It says hello."]
     # how much prompt Ollama had to read (v check shows it: slow CPUs choke on re-reading long prompts)
     assert agent.client.prompt_tokens == 1240 and abs(agent.client.prompt_seconds - 2.1) < 1e-9
+    first = agent.client.calls[0]
+    assert (first["gen_tokens"], first["gen_s"], first["load_s"], first["thinking_chars"]) == (30, 1.5, 3.0, 0)
+    assert len(agent.client.calls) == 2
 
 
 def test_llama_server_prompt_timings(tmp_path, server):
     chunks = text_chunks("Hi there.")
-    chunks[-1]["timings"] = {"prompt_n": 37, "prompt_ms": 412.5, "cache_n": 1500}
+    chunks[-1]["timings"] = {"prompt_n": 37, "prompt_ms": 412.5, "cache_n": 1500, "predicted_n": 12, "predicted_ms": 600}
     srv = server([chunks])
     agent, spoken, _ = make_agent(tmp_path, srv.url)
     agent.turn("hi")
     assert spoken == ["Hi there."]
     assert agent.client.prompt_tokens == 37 and abs(agent.client.prompt_seconds - 0.4125) < 1e-9
+    assert agent.client.calls == [{"prompt_tokens": 37, "prompt_s": 0.4125, "gen_tokens": 12, "gen_s": 0.6,
+                                   "cached_tokens": 1500, "load_s": 0.0, "thinking_chars": 0}]
 
 
 def test_thinking_text_is_never_spoken_or_kept(tmp_path, server):

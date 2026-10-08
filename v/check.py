@@ -28,12 +28,25 @@ class _Quiet:
 
 
 def _reading(client, before) -> str:
-    """How much prompt the model server had to read for a step, when it says."""
-    tokens, seconds = client.prompt_tokens - before[0], client.prompt_seconds - before[1]
-    if tokens <= 0:
-        return ""
-    rate = f" at {tokens / seconds:,.0f}/s" if seconds > 0 else ""
-    return f" (read {tokens:,} prompt tokens{rate})"
+    """Where a step's time went, from the model server's own numbers: how many requests, how much
+    prompt it had to read, how much it wrote."""
+    calls = client.calls[before[2]:] if len(before) > 2 else []
+    if not calls:
+        tokens, seconds = client.prompt_tokens - before[0], client.prompt_seconds - before[1]
+        return f" (read {tokens:,} prompt tokens)" if tokens > 0 else ""
+    read, read_s = sum(c["prompt_tokens"] for c in calls), sum(c["prompt_s"] for c in calls)
+    wrote, wrote_s = sum(c["gen_tokens"] for c in calls), sum(c["gen_s"] for c in calls)
+    cached, load_s = sum(c["cached_tokens"] for c in calls), sum(c["load_s"] for c in calls)
+    parts = [f"{len(calls)} model calls", f"read {read:,} prompt tokens in {read_s:.0f}s",
+             f"wrote {wrote:,} tokens in {wrote_s:.0f}s"]
+    if cached:
+        parts.append(f"{cached:,} reused from cache")
+    if load_s >= 1:
+        parts.append(f"{load_s:.0f}s loading the model")
+    thinking = sum(c.get("thinking_chars", 0) for c in calls)
+    if thinking:
+        parts.append(f"{thinking:,} characters of hidden thinking")
+    return " (" + "; ".join(parts) + ")"
 
 
 def sample_font(size: int):
@@ -106,7 +119,7 @@ def run_check(url=None, model=None, log: Callable[[str], None] = print) -> int:
         ui, spoken = _Quiet(), []
         agent = LocalAgent(client, cfg, spoken.append, Toolbox(cfg, Confirmer("none", lambda q: "yes"), ui), ui=ui)
 
-        t0, read0 = time.time(), (client.prompt_tokens, client.prompt_seconds)
+        t0, read0 = time.time(), (client.prompt_tokens, client.prompt_seconds, len(client.calls))
         agent.turn("What is the secret word in the file secret.txt? Read the file, then tell me the word.")
         used = [m for m in agent.history if m["role"] == "tool"]
         answer = " ".join(m.get("content") or "" for m in agent.history if m["role"] == "assistant")
@@ -114,7 +127,7 @@ def run_check(url=None, model=None, log: Callable[[str], None] = print) -> int:
                f"{time.time() - t0:.1f}s{_reading(client, read0)}" if word in answer else
                f"tools used: {[m.get('name') for m in used] or 'none'}; answer: {answer[:120]!r}", essential=True)
 
-        t0, read0 = time.time(), (client.prompt_tokens, client.prompt_seconds)
+        t0, read0 = time.time(), (client.prompt_tokens, client.prompt_seconds, len(client.calls))
         agent.turn("Create a file called hello.txt that contains the text: hi from v")
         made = project / "hello.txt"
         ok = made.exists() and "hi from v" in made.read_text(encoding="utf-8", errors="replace").lower()

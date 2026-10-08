@@ -83,7 +83,7 @@ MODELS = [
     ModelChoice(
         "gpt-oss 120B",
         "gpt-oss:120b",
-        ("ggml-org/gpt-oss-120b-GGUF", "unsloth/gpt-oss-120b-GGUF"),
+        ("ggml-org/gpt-oss-120b-GGUF",),
         "mxfp4",
         63,
         68,  # e.g. a 96-128 GB Mac, or a PC with 128 GB of RAM and an 8 GB+ graphics card
@@ -102,7 +102,7 @@ MODELS = [
     ModelChoice(
         "gpt-oss 20B",
         "gpt-oss:20b",
-        ("ggml-org/gpt-oss-20b-GGUF", "unsloth/gpt-oss-20b-GGUF"),
+        ("ggml-org/gpt-oss-20b-GGUF",),
         "mxfp4",
         12.1,
         15,
@@ -311,6 +311,7 @@ class LocalClient:
         # on a computer without a GPU, this is what makes a reply slow to start
         self.prompt_tokens = 0
         self.prompt_seconds = 0.0
+        self.calls: list = []  # per request, as the server reports it: prompt read, tokens written, seconds
 
     def _open(self, url: str, body: dict):
         req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
@@ -323,6 +324,13 @@ class LocalClient:
             raise LocalError(f"the local model server said {e.code}: {detail}") from None
         except (urllib.error.URLError, OSError) as e:
             raise LocalError(f"can't reach the local model at {self.server.base_url} ({e})") from None
+
+    def _record(self, prompt_n: int, prompt_s: float, gen_n: int, gen_s: float, cached: int = 0, load_s: float = 0.0,
+                thinking: int = 0) -> None:
+        self.prompt_tokens += prompt_n
+        self.prompt_seconds += prompt_s
+        self.calls.append({"prompt_tokens": prompt_n, "prompt_s": prompt_s, "gen_tokens": gen_n, "gen_s": gen_s,
+                           "cached_tokens": cached, "load_s": load_s, "thinking_chars": thinking})
 
     def stream_chat(self, messages: list[dict], tools: list[dict]) -> Iterator[dict]:
         """Yields OpenAI-style streaming chunks, whatever the server."""
@@ -353,8 +361,9 @@ class LocalClient:
                     continue
                 timings = chunk.get("timings") if isinstance(chunk, dict) else None
                 if isinstance(timings, dict):  # llama-server
-                    self.prompt_tokens += int(timings.get("prompt_n") or 0)
-                    self.prompt_seconds += float(timings.get("prompt_ms") or 0) / 1000
+                    self._record(int(timings.get("prompt_n") or 0), float(timings.get("prompt_ms") or 0) / 1000,
+                                 int(timings.get("predicted_n") or 0), float(timings.get("predicted_ms") or 0) / 1000,
+                                 int(timings.get("cache_n") or 0))
                 yield chunk
 
 
@@ -388,7 +397,7 @@ class LocalClient:
         if "qwen3" in self.server.model.lower():
             body["think"] = False  # answer right away instead of reasoning out loud first
         resp = self._open(self.server.base_url[: -len("/v1")] + "/api/chat", body)
-        count = 0
+        count = thinking = 0
         with resp:
             for raw in resp:
                 try:
@@ -398,9 +407,11 @@ class LocalClient:
                 if event.get("error"):
                     raise LocalError(f"Ollama: {event['error']}")
                 if event.get("done"):
-                    self.prompt_tokens += int(event.get("prompt_eval_count") or 0)
-                    self.prompt_seconds += float(event.get("prompt_eval_duration") or 0) / 1e9
+                    self._record(int(event.get("prompt_eval_count") or 0), float(event.get("prompt_eval_duration") or 0) / 1e9,
+                                 int(event.get("eval_count") or 0), float(event.get("eval_duration") or 0) / 1e9,
+                                 load_s=float(event.get("load_duration") or 0) / 1e9, thinking=thinking)
                 msg = event.get("message") or {}
+                thinking += len(msg.get("thinking") or "")  # reasoning v doesn't show; it still takes time
                 delta: dict = {"content": msg.get("content") or ""}
                 calls = []
                 for call in msg.get("tool_calls") or []:

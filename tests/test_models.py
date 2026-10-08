@@ -96,11 +96,12 @@ def test_reads_every_page_of_a_repo_listing(monkeypatch):
 def runner(tmp_path, monkeypatch):
     """v's own llama.cpp runner with the downloads, the process and the hardware faked."""
     monkeypatch.setattr(local, "STATE_DIR", tmp_path)
-    binary = tmp_path / "bin" / "llama-server"
+    binary = tmp_path / "bin" / ("llama-server.exe" if sys.platform.startswith("win") else "llama-server")
     binary.parent.mkdir()
     binary.write_text("")
     fake = types.ModuleType("cheapstack")
     fake.release = types.ModuleType("cheapstack.release")
+    fake.release.download_and_extract = lambda *a: pytest.fail("tests must not download llama.cpp")
     monkeypatch.setitem(sys.modules, "cheapstack", fake)
     state = {"downloads": [], "cmd": None, "vram": 8.0, "apple": False, "free": 10_000.0}
 

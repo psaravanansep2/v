@@ -26,7 +26,7 @@ phone = ["qrcode", "cryptography"]
 # so installing needs no git.
 local = ["cheapstack @ https://github.com/psaravanansep2/cheapstack/archive/refs/heads/master.zip"]
 # Reading text off the screen, and reading PDFs.
-free = ["rapidocr_onnxruntime", "pypdf", "pillow"]
+free = ["rapidocr_onnxruntime", "pypdf", "pillow", "pillow-heif"]
 all = ["v[voice,computer,phone,local,free]"]
 dev = ["pytest"]
 

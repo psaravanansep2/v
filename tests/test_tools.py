@@ -272,6 +272,14 @@ def test_reads_the_words_in_a_picture(tmp_path):
     assert "Latte  $4.50" in tb.run("read_file", {"path": str(tmp_path / "receipt.jpg")})
 
 
+def test_reads_iphone_photos(tmp_path):
+    heif = pytest.importorskip("pillow_heif")
+    heif.register_heif_opener()
+    Image.new("RGB", (400, 200), "white").save(tmp_path / "IMG_0042.HEIC")
+    out = read_image(tmp_path / "IMG_0042.HEIC", WordsOCR())
+    assert out.startswith("IMG_0042.HEIC is a 400x200 picture.") and "Latte  $4.50" in out
+
+
 def test_reads_a_real_photo_of_text(tmp_path):
     pytest.importorskip("rapidocr_onnxruntime")
     from PIL import ImageDraw

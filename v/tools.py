@@ -160,7 +160,7 @@ def _http_get(url: str, timeout: int = 20, max_bytes: int = 3_000_000) -> tuple[
 
 # --- reading text in pictures ---------------------------------------------------
 
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic", ".heif"}
 _ocr_lock = threading.Lock()
 _ocr = None
 
@@ -185,6 +185,14 @@ def read_image(p: Path, engine=None) -> str:
         engine = engine or ocr_engine()
     except ImportError:
         return f"{p} is a picture. Reading text in pictures needs the free OCR add-on: pip install 'v[free]'."
+    if p.suffix.lower() in (".heic", ".heif"):  # iPhone photos
+        try:
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener()
+        except ImportError:
+            return (f"{p.name} is an iPhone photo (HEIC), and the add-on that opens those isn't installed: "
+                    "pip install pillow-heif. Or send it as a JPEG (iPhone Settings > Camera > Formats > Most Compatible).")
     with Image.open(p) as image:
         image = ImageOps.exif_transpose(image).convert("RGB")  # phone photos are often stored sideways
     image.thumbnail((2400, 2400))

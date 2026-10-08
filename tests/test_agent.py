@@ -82,6 +82,14 @@ def reply(blocks, stop_reason="end_turn"):
     return (200, sse(blocks, stop_reason))
 
 
+class RecordingUI:
+    def __init__(self, events):
+        self.events = events
+
+    def __getattr__(self, name):
+        return lambda *args: self.events.append((name, *args))
+
+
 class Harness:
     def __init__(self, tmp_path, *responses, answers=(), confirm="risky", computer=True):
         self.api = FakeAPI(*responses)
@@ -91,7 +99,7 @@ class Harness:
             http_client=anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(self.api)),
         )
         self.spoken = []
-        self.printed = []
+        self.events = []
         self.questions = []
         answers = list(answers)
 
@@ -112,11 +120,14 @@ class Harness:
             confirmer=Confirmer(confirm, ask),
             computer=self.computer,
             sessions=self.sessions,
-            out=lambda *a, **k: self.printed.append(" ".join(map(str, a))),
+            ui=RecordingUI(self.events),
         )
 
     def body(self, i):
         return self.api.requests[i]["body"]
+
+    def kinds(self, kind):
+        return [e[1:] for e in self.events if e[0] == kind]
 
 
 def test_plain_reply_is_spoken_sentence_by_sentence(tmp_path):
@@ -304,3 +315,54 @@ def test_unexpected_tool_error_goes_back_to_claude(tmp_path, monkeypatch):
     h.agent.turn("save the goal")
     result = h.body(1)["messages"][2]["content"][0]
     assert result["is_error"] and "OSError: disk full" in result["content"]
+
+
+def test_ui_events(tmp_path):
+    h = Harness(
+        tmp_path,
+        reply(
+            [
+                {"type": "thinking", "thinking": "Looking at the screen."},
+                {"type": "tool_use", "id": "tu_1", "name": "screenshot", "input": {}, "toolset_name": "computer"},
+            ],
+            "tool_use",
+        ),
+        reply([{"type": "text", "text": "All good."}]),
+    )
+    h.agent.turn("what's on screen?")
+    assert h.kinds("progress") == [("Looking at the screen.",)]
+    assert len(h.kinds("image")) == 1 and h.kinds("image")[0][0]  # latest screenshot sent to the UI
+    assert "".join(t[0] for t in h.kinds("text")) == "All good."
+    assert h.kinds("busy") == [(True,), (False,)]
+
+
+def test_cancel_from_another_thread_stops_before_next_tool(tmp_path):
+    h = Harness(
+        tmp_path,
+        reply(
+            [
+                {"type": "tool_use", "id": "tu_1", "name": "set_project_goal", "input": {"goal": "A"}},
+                {"type": "tool_use", "id": "tu_2", "name": "set_project_goal", "input": {"goal": "B"}},
+            ],
+            "tool_use",
+        ),
+    )
+    import v.agent
+
+    real_save = v.agent.save_goal
+
+    def save_then_stop(project, goal):
+        real_save(project, goal)
+        h.agent.cancel()  # user taps Stop while the first tool runs
+
+    v.agent.save_goal = save_then_stop
+    try:
+        h.agent.turn("set goals")
+    finally:
+        v.agent.save_goal = real_save
+    results = h.agent.messages[-1]["content"]
+    assert "is_error" not in results[0] and "Project goal saved: A" in results[0]["content"]
+    assert results[1]["is_error"] and "Interrupted" in results[1]["content"]
+    assert h.cfg.goal == "A"
+    assert ("interrupted",) in h.kinds("notice")
+    assert len(h.api.requests) == 1  # no further model call after Stop

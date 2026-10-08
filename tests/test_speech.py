@@ -146,3 +146,18 @@ def test_recorder_ignores_short_blips_and_its_own_voice(monkeypatch):
     end = stream.pos / 16_000
     assert end > 3.6  # stopped after the user's utterance, not the blip or v's voice
     assert 1.6 <= len(audio) / 16_000 <= 2.2
+
+
+def test_to_wav_roundtrip():
+    import io
+    import wave
+
+    import numpy as np
+
+    from v.speech import to_wav
+
+    data = to_wav(np.array([0.0, 0.5, -0.5, 2.0], dtype="float32"), 24_000)
+    with wave.open(io.BytesIO(data)) as w:
+        assert (w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()) == (1, 2, 24_000, 4)
+        frames = np.frombuffer(w.readframes(4), dtype="<i2")
+    assert list(frames) == [0, 16383, -16383, 32767]  # clipped at full scale

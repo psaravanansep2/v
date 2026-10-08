@@ -15,9 +15,11 @@ text mode works without any of them installed.
 
 from __future__ import annotations
 
+import io
 import queue
 import re
 import threading
+import wave
 from typing import Callable, Iterator, Optional
 
 SAMPLE_RATE = 16_000
@@ -96,6 +98,10 @@ class Transcriber:
         self.language = "en" if model_size.endswith(".en") else None
 
     def transcribe(self, audio) -> str:
+        """`audio` is float32 samples at 16 kHz, or the bytes of a recorded
+        file in any format ffmpeg/PyAV can decode (the phone sends webm or mp4)."""
+        if isinstance(audio, (bytes, bytearray)):
+            audio = io.BytesIO(audio)
         segments, _ = self.model.transcribe(audio, language=self.language, beam_size=1, vad_filter=True)
         return " ".join(s.text.strip() for s in segments).strip()
 
@@ -108,25 +114,38 @@ class KokoroEngine:
 
     def __init__(self, voice: str = "af_heart"):
         from kokoro import KPipeline
-        import sounddevice as sd
 
         # lang_code "a" = American English; voice names starting with "b"
         # (e.g. bf_emma) are British and need lang_code "b".
         self.pipeline = KPipeline(lang_code=voice[0] if voice[:1] in "ab" else "a")
         self.voice = voice
-        self._sd = sd
 
-    def speak(self, text: str) -> None:
+    def synthesize(self, text: str):
+        """Float32 samples at 24 kHz for the whole text."""
+        import numpy as np
+
+        parts = []
         for result in self.pipeline(text, voice=self.voice):
             audio = result.audio
-            if audio is None:
-                continue
-            audio = audio.numpy() if hasattr(audio, "numpy") else audio
-            self._sd.play(audio, self.rate)
-            self._sd.wait()
+            if audio is not None:
+                parts.append(audio.numpy() if hasattr(audio, "numpy") else np.asarray(audio))
+        return np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
+
+    def speak(self, text: str) -> None:
+        import sounddevice as sd  # only needed when playing through this computer's speakers
+
+        audio = self.synthesize(text)
+        if len(audio):
+            sd.play(audio, self.rate)
+            sd.wait()
 
     def stop(self) -> None:
-        self._sd.stop()
+        try:
+            import sounddevice as sd
+
+            sd.stop()
+        except Exception:
+            pass
 
 
 class Pyttsx3Engine:
@@ -161,6 +180,20 @@ def make_engine(voice: str, log=print):
     except Exception as e:
         log(f"(pyttsx3 voice unavailable: {e.__class__.__name__}: {e}); replies will be text only)")
     return SilentEngine()
+
+
+def to_wav(samples, rate: int) -> bytes:
+    """Float samples in [-1, 1] -> 16-bit mono WAV bytes."""
+    import numpy as np
+
+    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
 
 
 _MARKUP = re.compile(r"[*_#`>|]+")

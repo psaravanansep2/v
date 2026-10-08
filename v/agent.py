@@ -28,6 +28,7 @@ from .confirm import COMMAND, COMPUTER, SESSION, Confirmer
 from .sessions import Session, SessionManager
 from .shell import run_command
 from .speech import SentenceChunker
+from .ui import Interrupted, TerminalUI
 
 BETAS = [
     "thinking-display-updates-2026-08-18",  # progress notes between tool calls, as text
@@ -207,7 +208,7 @@ class Agent:
         confirmer: Confirmer,
         computer: Optional[Computer],
         sessions: SessionManager,
-        out: Callable[..., None] = print,
+        ui=None,
         stop_speaking: Callable[[], None] = lambda: None,
     ):
         self.client = client
@@ -216,8 +217,9 @@ class Agent:
         self.confirmer = confirmer
         self.computer = computer
         self.sessions = sessions
-        self.out = out
+        self.ui = ui or TerminalUI()
         self.stop_speaking = stop_speaking
+        self._cancel = threading.Event()
         self.messages: list[dict] = []
         self._notes: list[str] = []
         self._notes_lock = threading.Lock()
@@ -235,7 +237,7 @@ class Agent:
         verb = {"done": "finished", "failed": "failed", "stopped": "stopped"}.get(session.status, session.status)
         line = f"Session {session.id} {verb}."
         summary = spoken_summary(session.result) if session.status != "stopped" else ""
-        self.out(f"\n[{line}]")
+        self.ui.notice(f"{line} {summary}".strip())
         self.say(f"{line} {summary}".strip())
 
     def _take_notes(self) -> list[str]:
@@ -260,7 +262,23 @@ class Agent:
             betas=BETAS,
         )
 
+    def cancel(self) -> None:
+        """Stop the current turn at the next safe point (called from another thread)."""
+        self._cancel.set()
+
+    def _check_cancel(self) -> None:
+        if self._cancel.is_set():
+            raise Interrupted()
+
     def turn(self, user_text: str) -> None:
+        self._cancel.clear()
+        self.ui.busy(True)
+        try:
+            self._turn(user_text)
+        finally:
+            self.ui.busy(False)
+
+    def _turn(self, user_text: str) -> None:
         notes = self._take_notes()
         content = "\n\n".join(notes + [user_text]) if notes else user_text
         self.messages.append({"role": "user", "content": content})
@@ -285,16 +303,18 @@ class Agent:
                 elif not tool_uses:
                     return
                 else:
+                    self._check_cancel()
                     self.messages.append({"role": "user", "content": self._run_tools(tool_uses)})
+                    self._check_cancel()
 
                 rounds += 1
                 if rounds >= self.cfg.max_tool_rounds:
                     self.say("I've taken a lot of steps on this. Say continue if you want me to keep going.")
                     return
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, Interrupted):
             self.stop_speaking()
             self._close_dangling("Interrupted by the user before this ran.")
-            self.out("\n(interrupted)")
+            self.ui.notice("interrupted")
 
     def _stream_once(self):
         chunker = SentenceChunker()
@@ -304,8 +324,9 @@ class Agent:
             try:
                 with self.client.beta.messages.stream(**self._params()) as stream:
                     for event in stream:
+                        self._check_cancel()
                         if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                            self.out(event.delta.text, end="", flush=True)
+                            self.ui.text(event.delta.text)
                             printed = True
                             for sentence in chunker.feed(event.delta.text):
                                 self.say(sentence)
@@ -316,11 +337,11 @@ class Agent:
                                     self.say(sentence)
                             elif block.type == "thinking" and block.thinking.strip():
                                 # a progress note (display="updates"); reasoning itself stays hidden
-                                self.out(f"\n… {block.thinking.strip()}", flush=True)
+                                self.ui.progress(block.thinking.strip())
                                 self.say(block.thinking)
                     msg = stream.get_final_message()
                 if printed:
-                    self.out("")
+                    self.ui.text_end()
                 return msg
             except ValueError:
                 # Tool-input JSON the SDK couldn't parse at all (eager input
@@ -335,8 +356,8 @@ class Agent:
                 self.say("I'm being rate limited right now. Give it a moment and ask again.")
                 return None
             except anthropic.APIStatusError as e:
-                self.out(f"\n(API error {e.status_code}: {e.message})")
-                self.say("I hit an error talking to Claude. The details are in the terminal.")
+                self.ui.error(f"API error {e.status_code}: {e.message}")
+                self.say("I hit an error talking to Claude. The details are on screen.")
                 return None
             except anthropic.APIConnectionError:
                 self.say("I can't reach the Claude API. Check the internet connection.")
@@ -369,18 +390,46 @@ class Agent:
         return self.confirmer.confirm(f"I'm about to {steps}. Okay?")
 
     def _run_tools(self, tool_uses: list) -> list[dict]:
-        computer_blocks = [b for b in tool_uses if getattr(b, "toolset_name", None) == computer_mod.TOOLSET_NAME]
+        """Run a turn's tool calls in order. If Stop is pressed partway, the
+        calls that already ran keep their real results and the rest are
+        answered as interrupted."""
+        is_computer = lambda b: getattr(b, "toolset_name", None) == computer_mod.TOOLSET_NAME  # noqa: E731
+        computer_blocks = [b for b in tool_uses if is_computer(b)]
         results: list[dict] = []
-        computer_done = False
+        computer_handled = False
         for block in tool_uses:
-            if getattr(block, "toolset_name", None) == computer_mod.TOOLSET_NAME:
-                # The whole batch runs in order where the first one appears.
-                if not computer_done:
-                    results += run_batch(self.computer, computer_blocks, self._approve_computer)
-                    computer_done = True
-                continue
-            results.append(self._run_custom(block))
+            if is_computer(block):
+                # The whole computer batch runs in order where its first call appears.
+                if computer_handled:
+                    continue
+                computer_handled = True
+                if self._cancel.is_set():
+                    results += [self._interrupted_result(b) for b in computer_blocks]
+                else:
+                    batch = run_batch(self.computer, computer_blocks, self._approve_computer)
+                    self._show_latest_screenshot(batch)
+                    results += batch
+            elif self._cancel.is_set():
+                results.append(self._interrupted_result(block))
+            else:
+                results.append(self._run_custom(block))
         return results
+
+    @staticmethod
+    def _interrupted_result(block) -> dict:
+        r = {"type": "tool_result", "tool_use_id": block.id, "content": "Interrupted by the user before this ran.", "is_error": True}
+        if getattr(block, "toolset_name", None):
+            r["toolset_name"] = block.toolset_name
+        return r
+
+    def _show_latest_screenshot(self, results: list[dict]) -> None:
+        for r in reversed(results):
+            content = r.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if item.get("type") == "image":
+                        self.ui.image(item["source"]["data"])
+                        return
 
     def _run_custom(self, block) -> dict:
         def result(content: str, is_error: bool = False) -> dict:
@@ -408,7 +457,7 @@ class Agent:
             command = args["command"]
             if self.confirmer.needs(COMMAND) and not self.confirmer.confirm(f"Run this command: {command}?"):
                 return "The user declined to run this command.", True
-            self.out(f"\n$ {command}")
+            self.ui.activity(f"$ {command}")
             return run_command(command, self.cfg.project_dir, self.cfg.command_timeout_s)
 
         if name == "start_session":
@@ -419,7 +468,7 @@ class Agent:
             session = self.sessions.start(args["task"], args["summary"])
             if session.status == "failed":
                 return session.result, True
-            self.out(f"\n[session {session.id} started: {session.summary}]")
+            self.ui.activity(f"Session {session.id} started: {session.summary}")
             return f"Started session {session.id}. It runs in the background; its result will arrive as a [Session update].", False
 
         if name == "session_status":
@@ -437,7 +486,7 @@ class Agent:
             ):
                 return "The user declined this follow-up.", True
             self.sessions.resume(sid, args["message"])
-            self.out(f"\n[session {sid} continued: {args['summary']}]")
+            self.ui.activity(f"Session {sid} continued: {args['summary']}")
             return f"Session {sid} is running again with the follow-up.", False
 
         if name == "stop_session":
@@ -448,6 +497,7 @@ class Agent:
             goal = args["goal"].strip()
             self.cfg.goal = goal
             save_goal(self.cfg.project_dir, goal)
+            self.ui.goal(goal)
             return f"Project goal saved: {goal}", False
 
         raise KeyError(f"unhandled tool {name}")

@@ -24,7 +24,9 @@ voice = [
 ]
 # Screenshots + mouse/keyboard control.
 computer = ["pyautogui", "mss", "pillow"]
-all = ["v[voice,computer]"]
+# Use a phone as v's mic, speaker and screen: QR code + HTTPS certificate.
+phone = ["qrcode", "cryptography"]
+all = ["v[voice,computer,phone]"]
 dev = ["pytest"]
 
 [project.scripts]
@@ -32,6 +34,9 @@ v = "v.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["v*"]
+
+[tool.setuptools.package-data]
+v = ["phone.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

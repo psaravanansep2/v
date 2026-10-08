@@ -28,11 +28,12 @@ v>   Opening the browser now. … It's up on localhost 3000, the form is showing
 | Screen control | Claude's computer toolset: screenshots, zoom, clicks, typing, keys, scrolling, dragging (pyautogui + mss) | Your machine |
 | Coding work | Background `claude -p` sessions in your project directory, told the project goal, resumable for follow-ups | Your machine |
 | Memory | The project goal is saved in `<project>/.v/goal.txt` and picked up on the next run | Your machine |
+| Phone | Optional: any iPhone or Android phone becomes v's mic, speaker and screen through its web browser | Your phone + your machine |
 
 ## Install
 
 ```bash
-pip install -e ".[all]"       # voice + screen control
+pip install -e ".[all]"       # voice + screen control + phone
 export ANTHROPIC_API_KEY=...   # or: ant auth login
 v doctor                       # shows what's working and what's missing
 ```
@@ -53,6 +54,29 @@ v                                           # next time: it remembers
 - Just talk; v starts listening when you speak and stops when you pause.
 - **Ctrl+C** while v is working interrupts it. Ctrl+C while it's listening quits, and so does saying "goodbye".
 - **Emergency stop for screen control:** slam the mouse into a screen corner.
+
+## Use it from your phone (iPhone or Android)
+
+```bash
+v --phone
+```
+
+v prints a QR code. Scan it with your phone's camera (same Wi-Fi as the
+computer) and v opens in the browser: no app to install, no app store.
+
+- **Talk:** tap the big button and speak. It stops when you pause, and your words are transcribed on your computer.
+- **Watch:** see v's replies and progress, plus the latest screenshot of your computer as v works.
+- **Approve:** tap Yes or No when v asks before running something, or just say it.
+- **Stop:** tap Stop to interrupt v, or mute its voice.
+- **Install:** keep it one tap away with Share → *Add to Home Screen* (iPhone) or ⋮ → *Add to Home screen* (Android).
+
+Things to know:
+
+- **First visit:** your phone warns about the certificate. v makes its own HTTPS certificate on your computer, because phones only allow the microphone on secure pages. Tap *Show Details* → *visit this website* (iPhone) or *Advanced* → *Proceed* (Android) once.
+- **Away from home:** use [Tailscale](https://tailscale.com) on both devices and pass its real certificate with `v --phone --cert host.crt --key host.key` (from `tailscale cert`). Don't expose the port to the internet.
+- **The link is a key:** anyone with it can control your computer, so keep it private. `v --phone --new-token` makes a new one and unpairs every phone.
+- **Missing pieces fall back gracefully:** without Whisper on the computer, the phone uses its own speech recognition. Without Kokoro, the phone reads replies in its own voice. With `--http`, typing and the keyboard's dictation key still work.
+- **v can't control the phone itself.** The phone is a remote for your computer; iPhones don't allow apps to control other apps.
 
 Other modes:
 
@@ -90,6 +114,11 @@ classifier approve commands instead.
 | `--stt-model` | `base.en` | faster-whisper size: `tiny.en` (fastest) … `small.en` / `medium.en` (most accurate) |
 | `--voice` | `af_heart` | Kokoro voice (`am_michael`, `bf_emma`, …) |
 | `--session-mode` | `acceptEdits` | Claude Code permission mode for sessions |
+| `--phone` | off | Serve the phone page instead of using this computer's mic and speakers |
+| `--port` | `8765` | Phone mode port |
+| `--cert`, `--key` | self-signed | Phone mode TLS certificate (e.g. from Tailscale) |
+| `--http` | off | Phone mode without HTTPS (no talk button; typing and keyboard dictation work) |
+| `--new-token` | off | New phone pairing code |
 
 ## Notes on the Claude API usage
 
@@ -98,6 +127,10 @@ classifier approve commands instead.
 - `fallbacks: "default"` is on. If a request is declined by a safety classifier, the API retries it on a fallback model in the same call.
 - Progress notes between tool calls come from `thinking.display: "updates"`, and v speaks them.
 
+## License
+
+MIT. See [LICENSE](LICENSE). v calls the Claude API, so each person running it needs their own Anthropic API key.
+
 ## Development
 
 ```bash
@@ -105,7 +138,8 @@ pip install -e ".[all,dev]"
 pytest
 ```
 
-The tests use fakes for the mic, speakers, screen and `claude` binary. The
+The tests use fakes for the mic, speakers, screen and `claude` binary; the
+phone server is tested over real HTTP and HTTPS connections. The
 agent tests run the real Anthropic SDK against a fake HTTP server that
 replays streaming responses. That checks both the request v sends and its
 handling of real stream events.

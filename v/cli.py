@@ -3,6 +3,7 @@
     v                      voice conversation about the project in the current directory
     v --project ~/code/app --goal "Ship the signup flow by Friday"
     v --text               type instead of talking (add --speak to still hear replies)
+    v --phone              talk to v from your phone (iPhone or Android): scan the QR code
     v say "hello"          test the voice
     v listen               test the microphone + speech recognition
     v doctor               check what's installed and what's missing
@@ -29,6 +30,12 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--text", action="store_true", help="type instead of using the microphone")
     p.add_argument("--speak", action="store_true", help="in --text mode, still speak replies")
     p.add_argument("--no-computer", action="store_true", help="don't let v see the screen or use mouse/keyboard")
+    p.add_argument("--phone", action="store_true", help="use your phone (iPhone or Android) as v's mic, speaker and screen")
+    p.add_argument("--port", type=int, default=8765, help="phone mode: port to serve on (default 8765)")
+    p.add_argument("--http", action="store_true", help="phone mode: plain HTTP (typing and keyboard dictation still work)")
+    p.add_argument("--cert", type=Path, help="phone mode: TLS certificate file, e.g. from `tailscale cert`")
+    p.add_argument("--key", type=Path, help="phone mode: TLS private key file for --cert")
+    p.add_argument("--new-token", action="store_true", help="phone mode: new pairing code (unpairs every phone)")
     p.add_argument(
         "--confirm",
         choices=CONFIRM_POLICIES,
@@ -255,6 +262,130 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_phone(args) -> int:
+    import threading
+
+    import anthropic
+
+    from . import phone
+    from .agent import Agent
+    from .confirm import Confirmer
+    from .sessions import SessionManager
+    from .speech import Speaker
+    from .ui import TeeUI, TerminalUI
+
+    cfg = _config(args)
+    client = anthropic.Anthropic()
+    if not _has_credentials(client):
+        raise SystemExit(
+            "No Claude API credentials found. Set ANTHROPIC_API_KEY (or log in with `ant auth login`), then run v again."
+        )
+
+    hub, media = phone.Hub(), phone.MediaStore()
+
+    synth = None
+    try:
+        from .speech import KokoroEngine
+
+        synth = KokoroEngine(cfg.voice)
+    except Exception as e:
+        print(f"(Kokoro voice unavailable: {e.__class__.__name__}; the phone will use its own voice)")
+    transcriber = None
+    try:
+        from .speech import Transcriber
+
+        print("Loading speech recognition…")
+        transcriber = Transcriber(cfg.stt_model)
+    except Exception as e:
+        print(f"(Whisper unavailable: {e.__class__.__name__}; the phone will use its own speech recognition)")
+
+    voice = phone.PhoneVoice(hub, media, synth)
+    speaker = Speaker(voice)
+    bridge = phone.Bridge(hub, transcriber, say=speaker.say)
+
+    computer = None
+    if cfg.computer:
+        try:
+            from .computer import Computer
+
+            computer = Computer()
+        except Exception as e:
+            print(f"(screen control unavailable: {e.__class__.__name__}: {e})")
+
+    sessions = SessionManager(
+        cfg.project_dir, goal=lambda: cfg.goal, permission_mode=cfg.session_permission_mode, claude_bin=cfg.claude_bin
+    )
+    agent = Agent(
+        client,
+        cfg,
+        say=speaker.say,
+        confirmer=Confirmer(cfg.confirm, bridge.ask),
+        computer=computer,
+        sessions=sessions,
+        ui=TeeUI(TerminalUI(), phone.PhoneUI(hub, media)),
+        stop_speaking=speaker.stop,
+    )
+    sessions.on_finish = agent.on_session_finish
+    bridge.agent = agent
+
+    ip = phone.lan_ip()
+    ssl_ctx = None
+    scheme = "http"
+    if args.cert or args.key:
+        if not (args.cert and args.key):
+            raise SystemExit("--cert and --key go together")
+        ssl_ctx, scheme = phone.ssl_context(args.cert, args.key), "https"
+    elif not args.http:
+        try:
+            ssl_ctx, scheme = phone.ssl_context(*phone.self_signed_cert(ip)), "https"
+        except ImportError:
+            print("(cryptography not installed, so serving plain HTTP: typing and keyboard dictation work,")
+            print(" the talk button needs HTTPS. `pip install cryptography` to enable it.)")
+
+    token = phone.load_token(new=args.new_token)
+    hello = lambda: {  # noqa: E731
+        "project": cfg.project_dir.name,
+        "goal": cfg.goal,
+        "stt": transcriber is not None,
+        "voice": voice.mode,
+        "computer": computer is not None,
+        "confirm": cfg.confirm,
+    }
+    try:
+        server = phone.PhoneServer(("0.0.0.0", args.port), hub, media, bridge, token, hello, ssl_ctx)
+    except OSError as e:
+        raise SystemExit(f"Can't listen on port {args.port}: {e}. Try --port with another number.")
+
+    url = f"{scheme}://{ip}:{args.port}/?t={token}"
+    print(f"\nv · {cfg.project_dir}")
+    print(f"goal: {cfg.goal or '(none yet)'}\n")
+    print("Open this on your phone (same Wi-Fi), or scan the code:\n")
+    if not phone.print_qr(url):
+        print("(`pip install qrcode` to show a QR code here)")
+    print(f"\n  {url}\n")
+    if scheme == "https" and not args.cert:
+        print("The first time, your phone warns about the certificate (it's v's own, made on this computer).")
+        print("Tap Show Details / Advanced, then visit the site. Then Share → Add to Home Screen.\n")
+    print("Anyone with this link can control this computer; keep it private. Ctrl+C to stop.\n")
+
+    worker = threading.Thread(target=bridge.run_worker, daemon=True)
+    worker.start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bridge.stop()
+        running = [s for s in sessions.all() if s.status == "running"]
+        if running:
+            print(f"Stopping {len(running)} running session(s); resume them later with `claude --resume`.")
+            sessions.stop_all()
+        server.stopping.set()
+        server.server_close()
+        speaker.close()
+    return 0
+
+
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     if args.cmd == "say":
@@ -263,6 +394,8 @@ def main(argv=None) -> int:
         return cmd_listen(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
+    if args.phone:
+        return cmd_phone(args)
     return cmd_run(args)
 
 

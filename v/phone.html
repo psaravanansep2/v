@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="v">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)">
+<link rel="icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>v</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --panel: #ffffff; --text: #111827; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #4f46e5; --accent-text: #ffffff; --you: #4f46e5; --you-text: #ffffff;
+    --v: #ffffff; --danger: #dc2626; --ok: #16a34a; --warn-bg: #fff7ed; --warn-line: #fdba74;
+    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d12; --panel: #151922; --text: #e5e7eb; --muted: #9ca3af; --line: #262b36;
+      --accent: #818cf8; --accent-text: #0b0d12; --you: #4f46e5; --you-text: #ffffff;
+      --v: #1b202b; --danger: #f87171; --ok: #4ade80; --warn-bg: #2a1f12; --warn-line: #9a6a2f;
+      --shadow: 0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  body {
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 700; font-size: 22px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); transition: background .2s; }
+  .dot.on { background: var(--ok); }
+  .dot.busy { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .heading { min-width: 0; flex: 1; }
+  .project { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .goal { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .icon-btn { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; }
+  .icon-btn:active { background: var(--line); }
+  .icon-btn svg { width: 22px; height: 22px; }
+
+  #screen { border-bottom: 1px solid var(--line); background: var(--panel); }
+  #screen summary { list-style: none; padding: 8px 16px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+  #screen summary::-webkit-details-marker { display: none; }
+  #screen img { display: block; width: 100%; max-height: 28dvh; object-fit: contain; background: #000; }
+
+  main { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; overscroll-behavior: contain; }
+  .empty { margin: auto; text-align: center; color: var(--muted); max-width: 300px; }
+  .empty b { display: block; color: var(--text); font-size: 18px; margin-bottom: 6px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.you { align-self: flex-end; background: var(--you); color: var(--you-text); border-bottom-right-radius: 6px; }
+  .msg.v { align-self: flex-start; background: var(--v); box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
+  .line { align-self: flex-start; font-size: 14px; color: var(--muted); padding: 0 4px; overflow-wrap: anywhere; }
+  .line.activity { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .line.notice { align-self: center; text-align: center; }
+  .line.error { color: var(--danger); }
+
+  .ask { margin: 0 16px 8px; padding: 14px; border-radius: 16px; background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .ask p { margin: 0 0 12px; font-weight: 600; }
+  .ask .row { display: flex; gap: 10px; }
+  .ask button { flex: 1; min-height: 48px; border-radius: 12px; font-weight: 600; }
+  #yes { background: var(--accent); color: var(--accent-text); }
+  #no { background: var(--panel); border: 1px solid var(--line); }
+
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+  form { display: flex; gap: 8px; }
+  #input { flex: 1; min-width: 0; height: 44px; border-radius: 22px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 0 16px; font: inherit; font-size: 16px; }
+  #send { width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; flex: none; }
+  #send svg { width: 20px; height: 20px; }
+  .controls { display: flex; align-items: center; justify-content: center; gap: 28px; margin-top: 12px; }
+  .mic { width: 72px; height: 72px; border-radius: 50%; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; box-shadow: var(--shadow); transition: transform .1s; }
+  .mic:active { transform: scale(.96); }
+  .mic svg { width: 30px; height: 30px; }
+  .mic.recording { background: var(--danger); color: #fff; animation: ring 1.2s ease-out infinite; }
+  @keyframes ring { 0% { box-shadow: 0 0 0 0 rgba(220,38,38,.45); } 100% { box-shadow: 0 0 0 18px rgba(220,38,38,0); } }
+  .side { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; }
+  .side svg { width: 22px; height: 22px; }
+  .side[hidden] { visibility: hidden; display: grid; }
+  #hint { margin: 10px 0 0; text-align: center; font-size: 13px; color: var(--muted); min-height: 1em; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">v <span id="dot" class="dot" aria-hidden="true"></span></div>
+  <div class="heading">
+    <div class="project" id="project">Connecting…</div>
+    <div class="goal" id="goal"></div>
+  </div>
+  <button class="icon-btn" id="mute" aria-label="Mute v's voice" aria-pressed="false">
+    <svg id="speakerOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
+    <svg id="speakerOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m23 9-6 6"/><path d="m17 9 6 6"/></svg>
+  </button>
+</header>
+
+<details id="screen" hidden open>
+  <summary><span>Your computer's screen</span><span id="screenToggle">tap to hide</span></summary>
+  <img id="screenImg" alt="The latest screenshot v took of your computer">
+</details>
+
+<main id="log" aria-live="polite">
+  <div class="empty" id="empty"><b>Talk to v</b>Tap the button and say what you need. v works on your computer and answers here.</div>
+</main>
+
+<div id="ask" class="ask" hidden role="alertdialog" aria-labelledby="askQ">
+  <p id="askQ"></p>
+  <div class="row"><button id="no">No</button><button id="yes">Yes</button></div>
+</div>
+
+<footer>
+  <form id="form" autocomplete="off">
+    <input id="input" placeholder="Message v" enterkeyhint="send" aria-label="Message v">
+    <button id="send" type="submit" aria-label="Send">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+    </button>
+  </form>
+  <div class="controls">
+    <span class="side" aria-hidden="true" style="visibility:hidden"></span>
+    <button id="mic" class="mic" aria-label="Talk">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>
+    </button>
+    <button id="stop" class="side" aria-label="Stop what v is doing" hidden>
+      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+    </button>
+  </div>
+  <p id="hint"></p>
+</footer>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const token = new URLSearchParams(location.search).get("t") || "";
+  const withToken = (path) => path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(token);
+
+  // Install-to-home-screen manifest; it needs the pairing token too.
+  const manifest = document.createElement("link");
+  manifest.rel = "manifest";
+  manifest.href = withToken("/manifest.webmanifest");
+  document.head.append(manifest);
+
+  const post = (path, body, type = "application/json") =>
+    fetch(path, { method: "POST", headers: { "X-V-Token": token, "Content-Type": type }, body });
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  let hello = {};
+  let replaying = true;
+  let bubble = null;      // the v reply currently streaming in
+  let pendingAsk = null;
+  let busy = false;
+  let muted = store.get("v-muted") === "1";
+
+  // ---------- log ----------
+  const log = $("log");
+  const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+  function add(el) {
+    const stick = replaying || nearBottom();
+    $("empty").hidden = true;
+    log.append(el);
+    if (stick) log.scrollTop = log.scrollHeight;
+    return el;
+  }
+  function addMsg(who, text) {
+    const el = document.createElement("div");
+    el.className = "msg " + who;
+    el.textContent = text;
+    return add(el);
+  }
+  function addLine(kind, text) {
+    const el = document.createElement("div");
+    el.className = "line " + kind;
+    el.textContent = text;
+    bubble = null;
+    return add(el);
+  }
+  function resetLog() {
+    log.querySelectorAll(".msg, .line").forEach((el) => el.remove());
+    $("empty").hidden = false;
+    bubble = null;
+  }
+
+  // ---------- audio out ----------
+  let ctx = null;
+  let ttsUnlocked = false;
+  let playChain = Promise.resolve();
+  let generation = 0;
+  const sources = new Set();
+
+  function unlockAudio() {
+    // iOS only lets a page play sound after a tap, so every tap keeps audio unlocked.
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) ctx = new AC();
+    }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    if (!ttsUnlocked && "speechSynthesis" in window) {
+      speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+      ttsUnlocked = true;
+    }
+  }
+  document.addEventListener("pointerdown", unlockAudio, { capture: true });
+
+  function playAudio(id) {
+    if (muted || !ctx) return;
+    const gen = generation;
+    const decoded = fetch(withToken("/media/" + id))
+      .then((r) => r.arrayBuffer())
+      .then((buf) => new Promise((res, rej) => ctx.decodeAudioData(buf, res, rej)));
+    playChain = playChain
+      .then(() => decoded)
+      .then((buffer) => {
+        if (gen !== generation || muted) return;
+        return new Promise((res) => {
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(ctx.destination);
+          src.onended = () => { sources.delete(src); res(); };
+          sources.add(src);
+          src.start();
+        });
+      })
+      .catch(() => {});
+  }
+  function speakText(text) {
+    if (muted || !("speechSynthesis" in window)) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05;
+    speechSynthesis.speak(u);
+  }
+  function stopAudio() {
+    generation++;
+    sources.forEach((s) => { try { s.stop(); } catch {} });
+    sources.clear();
+    playChain = Promise.resolve();
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+  }
+  function setMuted(m) {
+    muted = m;
+    store.set("v-muted", m ? "1" : "0");
+    $("speakerOn").hidden = m;
+    $("speakerOff").hidden = !m;
+    $("mute").setAttribute("aria-pressed", String(m));
+    $("mute").setAttribute("aria-label", m ? "Unmute v's voice" : "Mute v's voice");
+    if (m) stopAudio();
+  }
+  $("mute").onclick = () => setMuted(!muted);
+  $("screen").addEventListener("toggle", () => {
+    $("screenToggle").textContent = $("screen").open ? "tap to hide" : "tap to show";
+  });
+  setMuted(muted);
+
+  // ---------- events from v ----------
+  function setBusy(b) {
+    busy = b;
+    $("stop").hidden = !b;
+    $("dot").classList.toggle("busy", b);
+  }
+  function showAsk(id, question) {
+    pendingAsk = id;
+    $("askQ").textContent = question;
+    $("ask").hidden = false;
+    if (!replaying) $("yes").focus({ preventScroll: true });
+  }
+  function hideAsk(id) {
+    if (id && id !== pendingAsk) return;
+    pendingAsk = null;
+    $("ask").hidden = true;
+  }
+
+  const handlers = {
+    hello(e) {
+      hello = e;
+      resetLog();
+      hideAsk();
+      replaying = true;
+      $("project").textContent = e.project ? "v · " + e.project : "v";
+      $("goal").textContent = e.goal || "No project goal yet";
+      configureMic();
+    },
+    replay_end() { replaying = false; },
+    user(e) { bubble = null; addMsg("you", e.text); },
+    text(e) {
+      if (!bubble) bubble = addMsg("v", "");
+      const stick = nearBottom();
+      bubble.textContent += e.delta;
+      if (stick) log.scrollTop = log.scrollHeight;
+    },
+    text_end() { bubble = null; },
+    progress(e) { addLine("progress", "… " + e.text); },
+    activity(e) { addLine("activity", e.text); },
+    notice(e) { addLine("notice", e.text); },
+    error(e) { addLine("error", e.text); },
+    goal(e) { $("goal").textContent = e.text; },
+    busy(e) { setBusy(e.busy); },
+    image(e) {
+      const img = $("screenImg");
+      img.onerror = () => { if (!img.dataset.ok) $("screen").hidden = true; };
+      img.onload = () => { img.dataset.ok = "1"; $("screen").hidden = false; };
+      img.src = withToken("/media/" + e.id);
+    },
+    ask(e) { showAsk(e.id, e.question); },
+    ask_done(e) { hideAsk(e.id); },
+    audio(e) { if (!replaying) playAudio(e.id); },
+    speak(e) { if (!replaying) speakText(e.text); },
+    stop_audio() { if (!replaying) stopAudio(); },
+  };
+
+  let source = null;
+  function connect() {
+    source = new EventSource(withToken("/events"));
+    source.onopen = () => $("dot").classList.add("on");
+    source.onerror = () => $("dot").classList.remove("on");  // EventSource reconnects by itself
+    source.onmessage = (msg) => {
+      let e;
+      try { e = JSON.parse(msg.data); } catch { return; }
+      const h = handlers[e.type];
+      if (h) h(e);
+    };
+  }
+  connect();
+  // Phones drop background connections; reconnect as soon as the page is visible again.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && source && source.readyState === EventSource.CLOSED) connect();
+  });
+
+  // ---------- input ----------
+  async function sendText(text) {
+    text = text.trim();
+    if (!text) return;
+    stopAudio();
+    const r = await post("/message", JSON.stringify({ text })).catch(() => null);
+    if (!r || !r.ok) addLine("error", "Couldn't reach v. Is it still running on your computer?");
+  }
+  $("form").onsubmit = (ev) => {
+    ev.preventDefault();
+    const input = $("input");
+    sendText(input.value);
+    input.value = "";
+  };
+  $("yes").onclick = () => answer("yes");
+  $("no").onclick = () => answer("no");
+  function answer(reply) {
+    if (!pendingAsk) return;
+    post("/answer", JSON.stringify({ id: pendingAsk, answer: reply }));
+    hideAsk();
+  }
+  $("stop").onclick = () => { stopAudio(); post("/interrupt", "{}"); };
+
+  // ---------- microphone ----------
+  // record:   record here, v transcribes on the computer (private, any language Whisper knows)
+  // browser:  the phone's built-in speech recognition
+  // keyboard: no secure connection, so no microphone access; use the keyboard's dictation key
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const canRecord = window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder;
+  let micMode = "keyboard";
+  let recording = false;
+
+  function configureMic() {
+    if (hello.stt && canRecord) micMode = "record";
+    else if (window.isSecureContext && SR) micMode = "browser";
+    else micMode = "keyboard";
+    const hint = $("hint");
+    if (micMode === "keyboard") {
+      hint.textContent = window.isSecureContext
+        ? "Tap the message box and use your keyboard's microphone key to talk."
+        : "Use your keyboard's microphone key to talk. (The talk button needs the https link.)";
+      $("mic").setAttribute("aria-label", "Talk using keyboard dictation");
+    } else {
+      hint.textContent = "Tap to talk. v stops listening when you pause.";
+    }
+  }
+
+  function setRecording(r) {
+    recording = r;
+    $("mic").classList.toggle("recording", r);
+    $("mic").setAttribute("aria-label", r ? "Stop and send" : "Talk");
+    if (micMode !== "keyboard") $("hint").textContent = r ? "Listening… tap again to send." : "Tap to talk. v stops listening when you pause.";
+  }
+
+  let recorder = null, stream = null, chunks = [], silenceTimer = null;
+
+  async function startRecording() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (err) {
+      addLine("error", "Microphone blocked. Allow microphone access for this page in your browser settings.");
+      return;
+    }
+    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"];
+    const type = (window.MediaRecorder.isTypeSupported && types.find((t) => MediaRecorder.isTypeSupported(t))) || "";
+    recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      clearInterval(silenceTimer);
+      stream.getTracks().forEach((t) => t.stop());
+      setRecording(false);
+      const blob = new Blob(chunks, { type: recorder.mimeType || type || "audio/mp4" });
+      if (blob.size < 2000) return;  // tapped by accident
+      const r = await post("/message", blob, (blob.type || "audio/mp4").split(";")[0]).catch(() => null);
+      if (!r || !r.ok) addLine("error", "Couldn't send that recording to v.");
+    };
+    recorder.start(250);
+    setRecording(true);
+    watchForPause(stream);
+  }
+
+  function watchForPause(stream) {
+    // Stop automatically after ~1.4 s of quiet once you've started talking.
+    if (!ctx) return;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const data = new Float32Array(analyser.fftSize);
+    const started = Date.now();
+    let floor = null, spoke = false, quietSince = null;
+    silenceTimer = setInterval(() => {
+      analyser.getFloatTimeDomainData(data);
+      let sum = 0;
+      for (const x of data) sum += x * x;
+      const rms = Math.sqrt(sum / data.length);
+      const t = Date.now() - started;
+      if (t < 300) { floor = Math.max(floor || 0, rms); return; }
+      const loud = rms > Math.max(0.015, (floor || 0) * 3);
+      if (loud) { spoke = true; quietSince = null; }
+      else if (spoke) {
+        quietSince = quietSince || Date.now();
+        if (Date.now() - quietSince > 1400) stopRecording();
+      }
+      if (t > 60000) stopRecording();
+    }, 100);
+  }
+
+  function stopRecording() {
+    clearInterval(silenceTimer);
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }
+
+  let recognition = null;
+  function startBrowserRecognition() {
+    recognition = new SR();
+    recognition.lang = navigator.language || "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    const input = $("input");
+    recognition.onresult = (e) => {
+      input.value = Array.from(e.results).map((r) => r[0].transcript).join("");
+    };
+    recognition.onerror = (e) => {
+      if (e.error === "not-allowed") addLine("error", "Microphone blocked. Allow microphone access for this page.");
+    };
+    recognition.onend = () => {
+      setRecording(false);
+      const text = input.value;
+      input.value = "";
+      sendText(text);
+    };
+    recognition.start();
+    setRecording(true);
+  }
+
+  $("mic").onclick = () => {
+    unlockAudio();
+    if (micMode === "keyboard") { $("input").focus(); return; }
+    if (recording) {
+      if (micMode === "record") stopRecording(); else if (recognition) recognition.stop();
+      return;
+    }
+    stopAudio();  // talking over v interrupts its speech
+    if (micMode === "record") startRecording(); else startBrowserRecognition();
+  };
+})();
+</script>
+</body>
+</html>

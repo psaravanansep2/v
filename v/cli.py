@@ -416,7 +416,7 @@ def main(argv=None) -> int:
     if args.cmd == "check":
         from .check import run_check
 
-        return run_check(url=args.local_url, model=args.local_model)
+        return run_check(url=args.local_url, model=args.local_model, log=lambda line: print(line, flush=True))
     if args.phone:
         return cmd_phone(args)
     return cmd_run(args)

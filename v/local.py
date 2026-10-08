@@ -266,6 +266,10 @@ class LocalClient:
     def __init__(self, server: LocalServer, timeout: float = 600):
         self.server = server
         self.timeout = timeout
+        # prompt tokens the server actually had to read (not reused from its cache), when it reports them:
+        # on a computer without a GPU, this is what makes a reply slow to start
+        self.prompt_tokens = 0
+        self.prompt_seconds = 0.0
 
     def _open(self, url: str, body: dict):
         req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
@@ -303,9 +307,14 @@ class LocalClient:
                 if data == "[DONE]":
                     return
                 try:
-                    yield json.loads(data)
+                    chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+                timings = chunk.get("timings") if isinstance(chunk, dict) else None
+                if isinstance(timings, dict):  # llama-server
+                    self.prompt_tokens += int(timings.get("prompt_n") or 0)
+                    self.prompt_seconds += float(timings.get("prompt_ms") or 0) / 1000
+                yield chunk
 
 
     def _ollama_chat(self, messages: list[dict], tools: list[dict]) -> Iterator[dict]:
@@ -347,6 +356,9 @@ class LocalClient:
                     continue
                 if event.get("error"):
                     raise LocalError(f"Ollama: {event['error']}")
+                if event.get("done"):
+                    self.prompt_tokens += int(event.get("prompt_eval_count") or 0)
+                    self.prompt_seconds += float(event.get("prompt_eval_duration") or 0) / 1e9
                 msg = event.get("message") or {}
                 delta: dict = {"content": msg.get("content") or ""}
                 calls = []

@@ -27,6 +27,15 @@ class _Quiet:
         return lambda *args: self.events.append((name, *args))
 
 
+def _reading(client, before) -> str:
+    """How much prompt the model server had to read for a step, when it says."""
+    tokens, seconds = client.prompt_tokens - before[0], client.prompt_seconds - before[1]
+    if tokens <= 0:
+        return ""
+    rate = f" at {tokens / seconds:,.0f}/s" if seconds > 0 else ""
+    return f" (read {tokens:,} prompt tokens{rate})"
+
+
 def sample_font(size: int):
     """A font that exists on this computer, for drawing test text."""
     from PIL import ImageFont
@@ -97,19 +106,20 @@ def run_check(url=None, model=None, log: Callable[[str], None] = print) -> int:
         ui, spoken = _Quiet(), []
         agent = LocalAgent(client, cfg, spoken.append, Toolbox(cfg, Confirmer("none", lambda q: "yes"), ui), ui=ui)
 
-        t0 = time.time()
+        t0, read0 = time.time(), (client.prompt_tokens, client.prompt_seconds)
         agent.turn("What is the secret word in the file secret.txt? Read the file, then tell me the word.")
         used = [m for m in agent.history if m["role"] == "tool"]
         answer = " ".join(m.get("content") or "" for m in agent.history if m["role"] == "assistant")
         report(bool(used) and word in answer, "uses tools (reads a file)",
-               f"{time.time() - t0:.1f}s" if word in answer else
+               f"{time.time() - t0:.1f}s{_reading(client, read0)}" if word in answer else
                f"tools used: {[m.get('name') for m in used] or 'none'}; answer: {answer[:120]!r}", essential=True)
 
-        t0 = time.time()
+        t0, read0 = time.time(), (client.prompt_tokens, client.prompt_seconds)
         agent.turn("Create a file called hello.txt that contains the text: hi from v")
         made = project / "hello.txt"
         ok = made.exists() and "hi from v" in made.read_text(encoding="utf-8", errors="replace").lower()
-        report(ok, "uses tools (writes a file)", f"{time.time() - t0:.1f}s" if ok else "hello.txt wasn't written as asked")
+        report(ok, "uses tools (writes a file)", f"{time.time() - t0:.1f}s{_reading(client, read0)}" if ok
+               else "hello.txt wasn't written as asked")
 
     # 4. instant commands (no model)
     quick = QuickCommands(lambda t: None, _Quiet(), launcher=lambda target: None)

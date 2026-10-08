@@ -143,11 +143,11 @@ def test_ollama_native_api_with_context_size(tmp_path, server):
         [
             [
                 {"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "read_file", "arguments": {"path": "a.txt"}}}]}, "done": False},
-                {"message": {"role": "assistant", "content": ""}, "done": True},
+                {"message": {"role": "assistant", "content": ""}, "done": True, "prompt_eval_count": 1200, "prompt_eval_duration": 2_000_000_000},
             ],
             [
                 {"message": {"role": "assistant", "content": "It says hello."}, "done": False},
-                {"message": {"role": "assistant", "content": ""}, "done": True},
+                {"message": {"role": "assistant", "content": ""}, "done": True, "prompt_eval_count": 40, "prompt_eval_duration": 100_000_000},
             ],
         ],
         tags=["qwen3:8b"],
@@ -163,6 +163,18 @@ def test_ollama_native_api_with_context_size(tmp_path, server):
     assert second[2]["tool_calls"][0]["function"]["arguments"] == {"path": "a.txt"}  # object, not a string
     assert second[3] == {"role": "tool", "content": "hello", "tool_name": "read_file"}
     assert spoken == ["It says hello."]
+    # how much prompt Ollama had to read (v check shows it: slow CPUs choke on re-reading long prompts)
+    assert agent.client.prompt_tokens == 1240 and abs(agent.client.prompt_seconds - 2.1) < 1e-9
+
+
+def test_llama_server_prompt_timings(tmp_path, server):
+    chunks = text_chunks("Hi there.")
+    chunks[-1]["timings"] = {"prompt_n": 37, "prompt_ms": 412.5, "cache_n": 1500}
+    srv = server([chunks])
+    agent, spoken, _ = make_agent(tmp_path, srv.url)
+    agent.turn("hi")
+    assert spoken == ["Hi there."]
+    assert agent.client.prompt_tokens == 37 and abs(agent.client.prompt_seconds - 0.4125) < 1e-9
 
 
 def test_thinking_text_is_never_spoken_or_kept(tmp_path, server):
